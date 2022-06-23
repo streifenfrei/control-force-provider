@@ -27,7 +27,8 @@ catkin_package(
 
 add_library(
         ${PROJECT_NAME}
-        src/control_force_provider.cpp)
+        src/control_force_provider.cpp
+)
 
 target_link_libraries(
         ${PROJECT_NAME} PUBLIC
