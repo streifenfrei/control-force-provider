@@ -5,12 +5,13 @@
 namespace control_force_provider::backend {
 class Obstacle {
  private:
-  Eigen::Vector3d rcm;
+  Eigen::Vector3d rcm_;
+
  public:
   Obstacle() = default;
   virtual void getPosition(Eigen::Vector3d& position);
   virtual ~Obstacle() = default;
 
-  const Eigen::Vector3d& getRCM() const { return rcm; }
+  const Eigen::Vector3d& getRCM() const { return rcm_; }
 };
-}
+}  // namespace control_force_provider::backend
