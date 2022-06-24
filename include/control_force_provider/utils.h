@@ -1,26 +1,79 @@
 #pragma once
 
-#include <yaml-cpp/yaml.h>
+#include <iostream>
+#include <ryml.hpp>
 
-namespace control_force_provider::utils {
+namespace control_force_provider {
+namespace exceptions {
+class ConfigError : public std::runtime_error {
+ public:
+  explicit ConfigError(const std::string &message) : runtime_error(message) {}
+};
+}  // namespace exceptions
+
+namespace utils {
+using namespace exceptions;
+
+// == ryml::to_csubstr but static (hacky workaround for gzserver error)
+static ryml::csubstr to_csubstr(std::string const &s) {
+  const char *data = !s.empty() ? &s[0] : nullptr;
+  return ryml::csubstr(data, s.size());
+}
+
+static std::string until_newline(std::string const &s) {
+  std::string::size_type pos = s.find('\n');
+  if (pos != std::string::npos)
+    return s.substr(0, pos);
+  else
+    return s;
+}
+
 template <typename T>
-std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) {
-  YAML::Node node = config[key];
-  if (!node.IsDefined()) {
+std::vector<T> getConfigValue(const ryml::NodeRef &config, const std::string &key);
+template <>
+inline std::vector<ryml::NodeRef> getConfigValue(const ryml::NodeRef &config, const std::string &key) {
+  ryml::csubstr key_r = to_csubstr(key);
+  if (!config.has_child(key_r)) {
     throw ConfigError("Missing key: " + key);
   }
-  try {
-    std::vector<T> value;
-    if (node.IsSequence()) {
-      for (auto &&i : node) {
-        value.push_back(i.as<T>());
-      }
-    } else {
-      value.push_back(node.as<T>());
+  ryml::NodeRef node = config[key_r];
+  std::vector<ryml::NodeRef> value;
+  if (node.is_seq()) {
+    for (ryml::NodeRef const &child : node.children()) {
+      value.push_back(child);
     }
-    return value;
-  } catch (const YAML::BadConversion &exception) {
-    throw ConfigError("Bad data type for key '" + key + "'. Expected: " + typeid(T).name());
+  } else {
+    value.emplace_back(node);
   }
+  return value;
 }
-}  // namespace control_force_provider::utils
+template <>
+inline std::vector<std::string> getConfigValue(const ryml::NodeRef &config, const std::string &key) {
+  std::vector<ryml::NodeRef> nodes = getConfigValue<ryml::NodeRef>(config, key);
+  std::vector<std::string> strings;
+  for (auto &node : nodes) {
+    strings.emplace_back(until_newline(node.val().data()));
+  }
+  return strings;
+}
+template <>
+inline std::vector<int> getConfigValue(const ryml::NodeRef &config, const std::string &key) {
+  std::vector<std::string> strings = getConfigValue<std::string>(config, key);
+  std::vector<int> values;
+  for (auto &string : strings) {
+    values.push_back(std::stoi(string));
+  }
+  return values;
+}
+template <>
+inline std::vector<double> getConfigValue(const ryml::NodeRef &config, const std::string &key) {
+  std::vector<std::string> strings = getConfigValue<std::string>(config, key);
+  std::vector<double> values;
+  for (auto &string : strings) {
+    values.push_back(std::stod(string));
+  }
+  return values;
+}
+
+}  // namespace utils
+}  // namespace control_force_provider

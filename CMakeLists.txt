@@ -12,7 +12,7 @@ find_package(
         roscpp)
 
 find_package(Eigen3 REQUIRED)
-find_package(yaml-cpp REQUIRED)
+find_package(ryml REQUIRED)
 
 catkin_package(
         INCLUDE_DIRS include
@@ -34,7 +34,7 @@ add_library(
 target_link_libraries(
         ${PROJECT_NAME} PUBLIC
         ${Franka_LIBRARIES}
-        ${yaml-cpp_LIBRARIES}
+        ryml::ryml
         ${catkin_LIBRARIES})
 
 target_include_directories(
