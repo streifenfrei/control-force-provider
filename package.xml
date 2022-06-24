@@ -10,17 +10,8 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
-  <build_depend>message_generation</build_depend>
-  <build_depend>eigen</build_depend>
-  <build_depend>ryml</build_depend>
-
-  <build_export_depend>message_runtime</build_export_depend>
-
-  <depend>eigen_conversions</depend>
-  <depend>geometry_msgs</depend>
-  <depend>tf</depend>
-  <depend>tf_conversions</depend>
+  <depend>eigen</depend>
+  <depend>ryml</depend>
   <depend>roscpp</depend>
 
-  <exec_depend>message_runtime</exec_depend>
 </package>

@@ -6,9 +6,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(
         catkin REQUIRED COMPONENTS
-        tf
-        tf_conversions
-        message_generation
         roscpp)
 
 find_package(Eigen3 REQUIRED)
@@ -18,11 +15,6 @@ catkin_package(
         INCLUDE_DIRS include
         LIBRARIES ${PROJECT_NAME}
         CATKIN_DEPENDS
-        eigen_conversions
-        geometry_msgs
-        tf
-        tf_conversions
-        message_runtime
         roscpp
         INCLUDE_DIRS include)
 
@@ -35,6 +27,7 @@ add_library(
 target_link_libraries(
         ${PROJECT_NAME} PUBLIC
         ${Franka_LIBRARIES}
+        Eigen3::Eigen
         ryml::ryml
         ${catkin_LIBRARIES})
 
