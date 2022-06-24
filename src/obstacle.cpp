@@ -25,7 +25,7 @@ SimulatedObstacle::SimulatedObstacle(const ryml::NodeRef& config) : speed_(getCo
     segments_normalized_.push_back(segment.normalized());
     double length = segments_[i].norm();
     segments_lengths_.push_back(length);
-    double duration = speed_ / length;
+    double duration = length / speed_;
     segments_durations_.push_back(duration);
     total_duration_ += duration;
   }

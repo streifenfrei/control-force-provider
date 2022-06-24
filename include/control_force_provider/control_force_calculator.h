@@ -19,6 +19,7 @@ class ControlForceCalculator {
  protected:
   Eigen::Vector3d rcm_;
   boost::shared_ptr<Obstacle> obstacle_;
+  friend class Visualizer;
 };
 
 class PotentialFieldMethod : public ControlForceCalculator {

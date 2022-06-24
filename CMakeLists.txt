@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(
         catkin REQUIRED COMPONENTS
+        rviz_visual_tools
         roscpp)
 
 find_package(Eigen3 REQUIRED)
@@ -15,6 +16,7 @@ catkin_package(
         INCLUDE_DIRS include
         LIBRARIES ${PROJECT_NAME}
         CATKIN_DEPENDS
+        rviz_visual_tools
         roscpp
         INCLUDE_DIRS include)
 
@@ -22,7 +24,8 @@ add_library(
         ${PROJECT_NAME}
         src/control_force_provider.cpp
         src/control_force_calculator.cpp
-        src/obstacle.cpp)
+        src/obstacle.cpp
+        src/visualizer.cpp)
 
 target_link_libraries(
         ${PROJECT_NAME} PUBLIC

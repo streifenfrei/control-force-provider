@@ -1,5 +1,6 @@
 #pragma once
 
+#include <boost/algorithm/string.hpp>
 #include <iostream>
 #include <ryml.hpp>
 
@@ -74,6 +75,14 @@ inline std::vector<double> getConfigValue(const ryml::NodeRef &config, const std
   }
   return values;
 }
-
+template <>
+inline std::vector<bool> getConfigValue(const ryml::NodeRef &config, const std::string &key) {
+  std::vector<std::string> strings = getConfigValue<std::string>(config, key);
+  std::vector<bool> values;
+  for (auto &string : strings) {
+    values.push_back(boost::algorithm::to_lower_copy(string) == "true");
+  }
+  return values;
+}
 }  // namespace utils
 }  // namespace control_force_provider

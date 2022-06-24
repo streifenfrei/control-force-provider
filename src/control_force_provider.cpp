@@ -21,8 +21,8 @@ ryml::Tree ControlForceProvider::loadConfig() {
   return ryml::parse_in_arena(to_csubstr(content));
 }
 
-ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider"), control_force_calculator_(nullptr), config(loadConfig()) {
-  ryml::NodeRef config_root_node = config.rootref();
+ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider"), control_force_calculator_(nullptr), config_(loadConfig()) {
+  ryml::NodeRef config_root_node = config_.rootref();
   try {
     string obstacle_type = getConfigValue<std::string>(config_root_node, "obstacle_type")[0];
     boost::shared_ptr<Obstacle> obstacle;
@@ -37,6 +37,9 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
     }
   } catch (ConfigError& ex) {
     ROS_ERROR_STREAM_NAMED("control_force_provider", "Exception: " << ex.what());
+  }
+  if (config_root_node.has_child("visualize") && getConfigValue<bool>(config_root_node, "visualize")[0]) {
+    visualizer_ = boost::make_shared<Visualizer>(node_handle_, control_force_calculator_);
   }
   spinner_.start();
 }

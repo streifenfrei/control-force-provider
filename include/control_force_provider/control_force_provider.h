@@ -7,6 +7,7 @@
 #include <ryml.hpp>
 
 #include "control_force_calculator.h"
+#include "visualizer.h"
 
 using namespace control_force_provider::backend;
 namespace control_force_provider {
@@ -24,9 +25,10 @@ class ROSNode {
 class ControlForceProvider : ROSNode {
  private:
   boost::shared_ptr<ControlForceCalculator> control_force_calculator_;
-  const ryml::Tree config;
+  const ryml::Tree config_;
   ros::NodeHandle node_handle_{};
   ros::AsyncSpinner spinner_{1};
+  boost::shared_ptr<Visualizer> visualizer_;
   ryml::Tree loadConfig();
 
  public:
