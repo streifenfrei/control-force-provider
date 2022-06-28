@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(
         catkin REQUIRED COMPONENTS
+        geometry_msgs
+        eigen_conversions
         rviz_visual_tools
         roscpp)
 
@@ -16,6 +18,8 @@ catkin_package(
         INCLUDE_DIRS include
         LIBRARIES ${PROJECT_NAME}
         CATKIN_DEPENDS
+        geometry_msgs
+        eigen_conversions
         rviz_visual_tools
         roscpp
         INCLUDE_DIRS include)

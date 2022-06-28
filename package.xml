@@ -13,6 +13,8 @@
   <depend>eigen</depend>
   <depend>ryml</depend>
   <depend>roscpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>eigen_conversions</depend>
   <depend>rviz_visual_tools</depend>
 
 </package>

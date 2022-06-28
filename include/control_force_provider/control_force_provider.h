@@ -1,5 +1,6 @@
 #pragma once
 
+#include <geometry_msgs/Point.h>
 #include <ros/ros.h>
 
 #include <Eigen/Dense>
@@ -18,7 +19,6 @@ class ROSNode {
     int argc = 0;
     ros::init(argc, nullptr, node_name);
   }
-
   ~ROSNode() { ros::shutdown(); }
 };
 }  // namespace backend
@@ -28,8 +28,11 @@ class ControlForceProvider : ROSNode {
   const ryml::Tree config_;
   ros::NodeHandle node_handle_{};
   ros::AsyncSpinner spinner_{1};
+  ros::Subscriber goal_subscriber_;
   boost::shared_ptr<Visualizer> visualizer_;
   ryml::Tree loadConfig();
+
+  void goalCallback(const geometry_msgs::Point& goal);
 
  public:
   ControlForceProvider();

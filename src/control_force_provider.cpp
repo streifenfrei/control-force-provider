@@ -1,5 +1,7 @@
 #include "control_force_provider/control_force_provider.h"
 
+#include <eigen_conversions/eigen_msg.h>
+
 #include <fstream>
 #include <iostream>
 
@@ -40,10 +42,18 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
   if (config_root_node.has_child("visualize") && getConfigValue<bool>(config_root_node, "visualize")[0]) {
     visualizer_ = boost::make_shared<Visualizer>(node_handle_, control_force_calculator_);
   }
+  goal_subscriber_ =
+      node_handle_.subscribe("control_force_provider/goal", 5, &ControlForceProvider::goalCallback, this, ros::TransportHints().reliable().tcpNoDelay());
   spinner_.start();
 }
 
 void ControlForceProvider::getForce(Vector4d& force, const Vector3d& ee_position) { control_force_calculator_->getForce(force, ee_position); }
+
+void ControlForceProvider::goalCallback(const geometry_msgs::Point& goal) {
+  Vector3d goal_eigen;
+  tf::pointMsgToEigen(goal, goal_eigen);
+  control_force_calculator_->setGoal(goal_eigen);
+}
 
 ControlForceProvider::~ControlForceProvider() {
   spinner_.stop();
