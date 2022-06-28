@@ -7,12 +7,11 @@
 
 #include "control_force_provider/utils.h"
 
-using namespace std;
 using namespace Eigen;
 using namespace control_force_provider::utils;
 namespace control_force_provider::backend {
 SimulatedObstacle::SimulatedObstacle(const ryml::NodeRef& config) : speed_(getConfigValue<double>(config, "speed")[0]) {
-  vector<double> waypoints_raw = getConfigValue<double>(config, "waypoints");
+  std::vector<double> waypoints_raw = getConfigValue<double>(config, "waypoints");
   unsigned int waypoints_raw_length = waypoints_raw.size() - (waypoints_raw.size() % 3);
   for (size_t i = 0; i < waypoints_raw_length; i += 3) {
     waypoints_.emplace_back(waypoints_raw[i], waypoints_raw[i + 1], waypoints_raw[i + 2]);
@@ -29,7 +28,7 @@ SimulatedObstacle::SimulatedObstacle(const ryml::NodeRef& config) : speed_(getCo
     segments_durations_.push_back(duration);
     total_duration_ += duration;
   }
-  vector<double> rcm_raw = getConfigValue<double>(config, "rcm");
+  std::vector<double> rcm_raw = getConfigValue<double>(config, "rcm");
   rcm_ = {rcm_raw[0], rcm_raw[1], rcm_raw[2]};
 }
 
