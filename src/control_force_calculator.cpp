@@ -12,6 +12,7 @@ PotentialFieldMethod::PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle
   attraction_distance_ = utils::getConfigValue<double>(config, "attraction_distance")[0];
   repulsion_strength_ = utils::getConfigValue<double>(config, "repulsion_strength")[0];
   repulsion_distance_ = utils::getConfigValue<double>(config, "repulsion_distance")[0];
+  min_rep_z_translation_ = utils::getConfigValue<double>(config, "min_rep_z_translation")[0];
 }
 
 void PotentialFieldMethod::getForceImpl(Vector4d& force) {
@@ -77,6 +78,17 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
       l2_to_l1 *= t;  // reduce the magnitude relative to the distance of the point on l1 to the end effector
       repulsive_vector = (repulsion_strength_ / l2_to_l1_distance - repulsion_strength_ / repulsion_distance_) / (l2_to_l1_distance * l2_to_l1_distance) *
                          l2_to_l1.normalized();
+      // avoid positive z-translation
+      double l1_length = b1.norm();
+      Vector3d l1_new = ee_position3d + repulsive_vector - a1;
+      double l1_new_length = l1_new.norm();
+      if (l1_length - l1_new_length < min_rep_z_translation_) {
+        l1_new *= (l1_length - min_rep_z_translation_) / l1_new_length;
+        repulsive_vector = a1 + l1_new - ee_position3d;
+        repulsive_vector -= b1 / l1_length * min_rep_z_translation_;  // add negative z-translation
+      }
+      if ((ee_position3d + repulsive_vector - a1).norm() < min_rcm_distance_)  // prevent pushing the end effector too close to the RCM
+        repulsive_vector = {0, 0, 0};
     }
   }
   Vector3d force3d = attractive_vector + repulsive_vector;
