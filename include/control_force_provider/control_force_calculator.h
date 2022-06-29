@@ -10,25 +10,27 @@
 namespace control_force_provider::backend {
 class ControlForceCalculator {
  protected:
+  Eigen::Vector4d ee_position_;
   Eigen::Vector3d rcm_;
-  Eigen::Vector3d goal_;
+  Eigen::Vector4d goal_;
   bool goal_available_ = false;
   boost::shared_ptr<Obstacle> obstacle_;
   friend class Visualizer;
 
-  virtual void getForceImpl(Eigen::Vector4d& force, const Eigen::Vector3d& ee_position) = 0;
+  virtual void getForceImpl(Eigen::Vector4d& force) = 0;
 
  public:
   explicit ControlForceCalculator(boost::shared_ptr<Obstacle>& obstacle) : obstacle_(obstacle) {}
-  void getForce(Eigen::Vector4d& force, const Eigen::Vector3d& ee_position) {
+  void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position) {
     if (!goal_available_) setGoal(ee_position);
-    getForceImpl(force, ee_position);
+    ee_position_ = ee_position;
+    getForceImpl(force);
   }
   virtual ~ControlForceCalculator() = default;
   [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm_; }
   void setRCM(const Eigen::Vector3d& rcm) { rcm_ = rcm; };
-  [[nodiscard]] const Eigen::Vector3d& getGoal() const { return goal_; }
-  void setGoal(const Eigen::Vector3d& goal) {
+  [[nodiscard]] const Eigen::Vector4d& getGoal() const { return goal_; }
+  void setGoal(const Eigen::Vector4d& goal) {
     goal_available_ = true;
     goal_ = goal;
   };
@@ -46,7 +48,7 @@ class PotentialFieldMethod : public ControlForceCalculator {
 
  public:
   PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config);
-  void getForceImpl(Eigen::Vector4d& force, const Eigen::Vector3d& ee_position) override;
+  void getForceImpl(Eigen::Vector4d& force) override;
   ~PotentialFieldMethod() override = default;
 };
 }  // namespace control_force_provider::backend

@@ -47,12 +47,13 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
   spinner_.start();
 }
 
-void ControlForceProvider::getForce(Vector4d& force, const Vector3d& ee_position) { control_force_calculator_->getForce(force, ee_position); }
+void ControlForceProvider::getForce(Vector4d& force, const Vector4d& ee_position) { control_force_calculator_->getForce(force, ee_position); }
 
 void ControlForceProvider::goalCallback(const geometry_msgs::Point& goal) {
   Vector3d goal_eigen;
   tf::pointMsgToEigen(goal, goal_eigen);
-  control_force_calculator_->setGoal(goal_eigen);
+  Vector4d goal_eigen4d = {goal_eigen[0], goal_eigen[1], goal_eigen[2], 0};
+  control_force_calculator_->setGoal(goal_eigen4d);
 }
 
 ControlForceProvider::~ControlForceProvider() {

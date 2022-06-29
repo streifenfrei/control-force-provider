@@ -14,12 +14,14 @@ PotentialFieldMethod::PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle
   repulsion_distance_ = utils::getConfigValue<double>(config, "repulsion_distance")[0];
 }
 
-void PotentialFieldMethod::getForceImpl(Vector4d& force, const Vector3d& ee_position) {
+void PotentialFieldMethod::getForceImpl(Vector4d& force) {
   Vector4d obstacle_position4d;
   obstacle_->getPosition(obstacle_position4d);
-  Vector3d obstacle_position = {obstacle_position4d[0], obstacle_position4d[1], obstacle_position4d[2]};
+  Vector3d obstacle_position = obstacle_position4d.head(3);
+  const Vector3d& goal3d = goal_.head(3);
+  const Vector3d& ee_position3d = ee_position_.head(3);
   // attractive vector
-  Vector3d attractive_vector = (goal_ - ee_position);
+  Vector3d attractive_vector = goal3d - ee_position3d;
   double ee_to_goal_distance = attractive_vector.norm();
   double smoothing_factor = 1;
   if (ee_to_goal_distance > attraction_distance_) {
@@ -32,7 +34,7 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force, const Vector3d& ee_posi
   //  tool1:                                                    l1 = a1 + t*b1
   //  tool2:                                                    l2 = a2 + s*b2
   const Vector3d& a1 = rcm_;
-  Vector3d b1 = ee_position - a1;
+  Vector3d b1 = ee_position3d - a1;
   const Vector3d& a2 = obstacle_->getRCM();
   Vector3d b2 = obstacle_position - a2;
   //  general vector between l1 and l2:                         v = a2 - a1 + sb2 - t*b1 = a' + s*b2 - t*b1
