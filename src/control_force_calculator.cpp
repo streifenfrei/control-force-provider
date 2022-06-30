@@ -12,7 +12,7 @@ PotentialFieldMethod::PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle
   attraction_distance_ = utils::getConfigValue<double>(config, "attraction_distance")[0];
   repulsion_strength_ = utils::getConfigValue<double>(config, "repulsion_strength")[0];
   repulsion_distance_ = utils::getConfigValue<double>(config, "repulsion_distance")[0];
-  min_rep_z_translation_ = utils::getConfigValue<double>(config, "min_rep_z_translation")[0];
+  z_translation_strength_ = utils::getConfigValue<double>(config, "z_translation_strength")[0];
 }
 
 void PotentialFieldMethod::getForceImpl(Vector4d& force) {
@@ -75,18 +75,19 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
     double l2_to_l1_distance = l2_to_l1.norm();
     // continue with PFM
     if (l2_to_l1_distance < repulsion_distance_) {
-      l2_to_l1 *= t;  // reduce the magnitude relative to the distance of the point on l1 to the end effector
-      repulsive_vector = (repulsion_strength_ / l2_to_l1_distance - repulsion_strength_ / repulsion_distance_) / (l2_to_l1_distance * l2_to_l1_distance) *
-                         l2_to_l1.normalized();
-      // avoid positive z-translation
       double l1_length = b1.norm();
+      repulsive_vector = (repulsion_strength_ / l2_to_l1_distance - repulsion_strength_ / repulsion_distance_) / (l2_to_l1_distance * l2_to_l1_distance) *
+                         l2_to_l1.normalized() * (1 / (t * l1_length));
+      // avoid positive z-translation
       Vector3d l1_new = ee_position3d + repulsive_vector - a1;
       double l1_new_length = l1_new.norm();
-      if (l1_length - l1_new_length < min_rep_z_translation_) {
-        l1_new *= (l1_length - min_rep_z_translation_) / l1_new_length;
+      if (l1_length - l1_new_length < 0) {
+        l1_new *= l1_length / l1_new_length;
         repulsive_vector = a1 + l1_new - ee_position3d;
-        repulsive_vector -= b1 / l1_length * min_rep_z_translation_;  // add negative z-translation
       }
+      // add negative z-translation
+      repulsive_vector -= (z_translation_strength_ / l2_to_l1_distance - z_translation_strength_ / repulsion_distance_) /
+                          (l2_to_l1_distance * l2_to_l1_distance) * (b1 / l1_length);
       if ((ee_position3d + repulsive_vector - a1).norm() < min_rcm_distance_)  // prevent pushing the end effector too close to the RCM
         repulsive_vector = {0, 0, 0};
     }
