@@ -13,6 +13,7 @@ find_package(
 
 find_package(Eigen3 REQUIRED)
 find_package(ryml REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Development)
 
 catkin_package(
         INCLUDE_DIRS include
@@ -33,12 +34,14 @@ add_library(
 
 target_link_libraries(
         ${PROJECT_NAME} PUBLIC
-        ${Franka_LIBRARIES}
         Eigen3::Eigen
         ryml::ryml
+        Python3::Python
         ${catkin_LIBRARIES})
 
 target_include_directories(
         ${PROJECT_NAME} PUBLIC
         include
         ${catkin_INCLUDE_DIRS})
+
+catkin_python_setup()

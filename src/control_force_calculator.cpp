@@ -102,7 +102,12 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacl
     : ControlForceCalculator(obstacle),
       interval_duration_(ros::Duration(utils::getConfigValue<double>(config, "interval_duration")[0] * 10e-4)),
       train_(utils::getConfigValue<bool>(config, "train")[0]),
-      last_calculation_(ros::Time::now()) {}
+      last_calculation_(ros::Time::now()) {
+  calculation_future_ = calculation_promise_.get_future();
+  calculation_promise_.set_value(Vector4d(0, 0, 0, 0));
+  networks_module_ = PyImport_ImportModule("cfp_networks");
+  if (!networks_module_) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to import the networks python module");
+}
 
 void ReinforcementLearningAgent::calculationRunnable() { calculation_promise_.set_value(getAction()); }
 
@@ -114,9 +119,13 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
       calculation_future_ = calculation_promise_.get_future();
       boost::thread calculation_thread{&ReinforcementLearningAgent::calculationRunnable, this};
     } else {
-      ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl_agent", "The RL agent exceeded the time limit!");
+      ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "The RL agent exceeded the time limit!");
     }
   }
   force = current_force_;
 }
+
+DeepQNetworkAgent::DeepQNetworkAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config) : ReinforcementLearningAgent(obstacle, config) {}
+
+Vector4d DeepQNetworkAgent::getAction() { return Vector4d(0, 0, 0, 0); }
 }  // namespace control_force_provider::backend

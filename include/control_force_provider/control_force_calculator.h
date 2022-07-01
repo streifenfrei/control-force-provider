@@ -8,6 +8,7 @@
 #include <boost/thread.hpp>
 #include <boost/thread/future.hpp>
 
+#include "control_force_provider/python_context.h"
 #include "obstacle.h"
 
 namespace control_force_provider::backend {
@@ -57,11 +58,11 @@ class PotentialFieldMethod : public ControlForceCalculator {
   ~PotentialFieldMethod() override = default;
 };
 
-class ReinforcementLearningAgent : public ControlForceCalculator {
+class ReinforcementLearningAgent : public ControlForceCalculator, PythonEnvironment {
  private:
   const ros::Duration interval_duration_;
   const bool train_;
-  Eigen::Vector4d current_force_ = {0, 0, 0, 0};
+  Eigen::Vector4d current_force_;
   ros::Time last_calculation_;
   boost::future<Eigen::Vector4d> calculation_future_;
   boost::promise<Eigen::Vector4d> calculation_promise_;
@@ -69,11 +70,20 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   void calculationRunnable();
 
  protected:
-  virtual Eigen::Vector4d getAction();
+  PythonObject networks_module_;
+  virtual Eigen::Vector4d getAction() = 0;
 
  public:
   ReinforcementLearningAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config);
   void getForceImpl(Eigen::Vector4d& force) override;
   ~ReinforcementLearningAgent() override = default;
+};
+
+class DeepQNetworkAgent : public ReinforcementLearningAgent {
+ protected:
+  Eigen::Vector4d getAction() override;
+
+ public:
+  DeepQNetworkAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config);
 };
 }  // namespace control_force_provider::backend
