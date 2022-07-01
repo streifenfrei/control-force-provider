@@ -77,7 +77,7 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
     if (l2_to_l1_distance < repulsion_distance_) {
       double l1_length = b1.norm();
       repulsive_vector = (repulsion_strength_ / l2_to_l1_distance - repulsion_strength_ / repulsion_distance_) / (l2_to_l1_distance * l2_to_l1_distance) *
-                         l2_to_l1.normalized() * (1 / (t * l1_length));
+                         l2_to_l1.normalized() * t * l1_length;
       // avoid positive z-translation
       Vector3d l1_new = ee_position3d + repulsive_vector - a1;
       double l1_new_length = l1_new.norm();
