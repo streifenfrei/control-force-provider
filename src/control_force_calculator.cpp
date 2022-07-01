@@ -13,6 +13,7 @@ PotentialFieldMethod::PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle
   repulsion_strength_ = utils::getConfigValue<double>(config, "repulsion_strength")[0];
   repulsion_distance_ = utils::getConfigValue<double>(config, "repulsion_distance")[0];
   z_translation_strength_ = utils::getConfigValue<double>(config, "z_translation_strength")[0];
+  min_rcm_distance_ = utils::getConfigValue<double>(config, "min_rcm_distance")[0];
 }
 
 void PotentialFieldMethod::getForceImpl(Vector4d& force) {

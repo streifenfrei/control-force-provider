@@ -43,7 +43,7 @@ class PotentialFieldMethod : public ControlForceCalculator {
   double repulsion_strength_;
   double repulsion_distance_;
   double z_translation_strength_;
-  double min_rcm_distance_ = 0.03;
+  double min_rcm_distance_;
   Eigen::Vector3d point_on_l1_;
   Eigen::Vector3d point_on_l2_;
   friend class Visualizer;
