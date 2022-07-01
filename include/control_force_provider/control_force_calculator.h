@@ -38,12 +38,12 @@ class ControlForceCalculator {
 
 class PotentialFieldMethod : public ControlForceCalculator {
  private:
-  double attraction_strength_;
-  double attraction_distance_;
-  double repulsion_strength_;
-  double repulsion_distance_;
-  double z_translation_strength_;
-  double min_rcm_distance_;
+  const double attraction_strength_;
+  const double attraction_distance_;
+  const double repulsion_strength_;
+  const double repulsion_distance_;
+  const double z_translation_strength_;
+  const double min_rcm_distance_;
   Eigen::Vector3d point_on_l1_;
   Eigen::Vector3d point_on_l2_;
   friend class Visualizer;

@@ -7,14 +7,14 @@
 using namespace Eigen;
 namespace control_force_provider::backend {
 
-PotentialFieldMethod::PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config) : ControlForceCalculator(obstacle) {
-  attraction_strength_ = utils::getConfigValue<double>(config, "attraction_strength")[0];
-  attraction_distance_ = utils::getConfigValue<double>(config, "attraction_distance")[0];
-  repulsion_strength_ = utils::getConfigValue<double>(config, "repulsion_strength")[0];
-  repulsion_distance_ = utils::getConfigValue<double>(config, "repulsion_distance")[0];
-  z_translation_strength_ = utils::getConfigValue<double>(config, "z_translation_strength")[0];
-  min_rcm_distance_ = utils::getConfigValue<double>(config, "min_rcm_distance")[0];
-}
+PotentialFieldMethod::PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config)
+    : ControlForceCalculator(obstacle),
+      attraction_strength_(utils::getConfigValue<double>(config, "attraction_strength")[0]),
+      attraction_distance_(utils::getConfigValue<double>(config, "attraction_distance")[0]),
+      repulsion_strength_(utils::getConfigValue<double>(config, "repulsion_strength")[0]),
+      repulsion_distance_(utils::getConfigValue<double>(config, "repulsion_distance")[0]),
+      z_translation_strength_(utils::getConfigValue<double>(config, "z_translation_strength")[0]),
+      min_rcm_distance_(utils::getConfigValue<double>(config, "min_rcm_distance")[0]) {}
 
 void PotentialFieldMethod::getForceImpl(Vector4d& force) {
   Vector4d obstacle_position4d;
