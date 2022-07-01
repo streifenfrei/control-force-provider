@@ -8,7 +8,7 @@ namespace control_force_provider {
 namespace exceptions {
 class ConfigError : public std::runtime_error {
  public:
-  explicit ConfigError(const std::string &message) : runtime_error(message) {}
+  explicit ConfigError(const std::string &message) : runtime_error(message) { ROS_ERROR_STREAM_NAMED("control_force_provider", "ConfigError: " << message); }
 };
 }  // namespace exceptions
 
@@ -35,7 +35,6 @@ template <>
 inline std::vector<ryml::NodeRef> getConfigValue(const ryml::NodeRef &config, const std::string &key) {
   ryml::csubstr key_r = to_csubstr(key);
   if (!config.has_child(key_r)) {
-    ROS_ERROR_STREAM_NAMED("control_force_provider", "ConfigError: Missing key '" << key << "'");
     throw ConfigError("Missing key '" + key + "'");
   }
   ryml::NodeRef node = config[key_r];
