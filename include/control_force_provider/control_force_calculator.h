@@ -1,9 +1,12 @@
 #pragma once
+#define BOOST_THREAD_PROVIDES_FUTURE
 
 #include <ros/ros.h>
 
 #include <Eigen/Dense>
 #include <boost/shared_ptr.hpp>
+#include <boost/thread.hpp>
+#include <boost/thread/future.hpp>
 
 #include "obstacle.h"
 
@@ -52,5 +55,25 @@ class PotentialFieldMethod : public ControlForceCalculator {
   PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config);
   void getForceImpl(Eigen::Vector4d& force) override;
   ~PotentialFieldMethod() override = default;
+};
+
+class ReinforcementLearningAgent : public ControlForceCalculator {
+ private:
+  const ros::Duration interval_duration_;
+  const bool train_;
+  Eigen::Vector4d current_force_ = {0, 0, 0, 0};
+  ros::Time last_calculation_;
+  boost::future<Eigen::Vector4d> calculation_future_;
+  boost::promise<Eigen::Vector4d> calculation_promise_;
+
+  void calculationRunnable();
+
+ protected:
+  virtual Eigen::Vector4d getAction();
+
+ public:
+  ReinforcementLearningAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config);
+  void getForceImpl(Eigen::Vector4d& force) override;
+  ~ReinforcementLearningAgent() override = default;
 };
 }  // namespace control_force_provider::backend

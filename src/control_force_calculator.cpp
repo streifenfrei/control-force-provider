@@ -1,6 +1,7 @@
 #include "control_force_provider/control_force_calculator.h"
 
 #include <boost/algorithm/clamp.hpp>
+#include <boost/chrono.hpp>
 
 #include "control_force_provider/utils.h"
 
@@ -95,5 +96,27 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
   }
   Vector3d force3d = attractive_vector + repulsive_vector;
   force = {force3d[0], force3d[1], force3d[2], 0};
+}
+
+ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config)
+    : ControlForceCalculator(obstacle),
+      interval_duration_(ros::Duration(utils::getConfigValue<double>(config, "interval_duration")[0] * 10e-4)),
+      train_(utils::getConfigValue<bool>(config, "train")[0]),
+      last_calculation_(ros::Time::now()) {}
+
+void ReinforcementLearningAgent::calculationRunnable() { calculation_promise_.set_value(getAction()); }
+
+void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
+  if (ros::Time::now() - last_calculation_ > interval_duration_) {
+    if (calculation_future_.wait_for(boost::chrono::seconds(0)) == boost::future_status::ready) {
+      current_force_ = calculation_future_.get();
+      calculation_promise_ = {};
+      calculation_future_ = calculation_promise_.get_future();
+      boost::thread calculation_thread{&ReinforcementLearningAgent::calculationRunnable, this};
+    } else {
+      ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl_agent", "The RL agent exceeded the time limit!");
+    }
+  }
+  force = current_force_;
 }
 }  // namespace control_force_provider::backend
