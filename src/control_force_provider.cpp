@@ -24,20 +24,16 @@ ryml::Tree ControlForceProvider::loadConfig() {
 
 ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider"), control_force_calculator_(nullptr), config_(loadConfig()) {
   ryml::NodeRef config_root_node = config_.rootref();
-  try {
-    std::string obstacle_type = getConfigValue<std::string>(config_root_node, "obstacle_type")[0];
-    boost::shared_ptr<Obstacle> obstacle;
-    if (obstacle_type == "simulated") {
-      ryml::NodeRef config_node = getConfigValue<ryml::NodeRef>(config_root_node, "simulated_obstacle")[0];
-      obstacle = boost::static_pointer_cast<Obstacle>(boost::make_shared<SimulatedObstacle>(config_node));
-    }
-    std::string calculator_type = getConfigValue<std::string>(config_root_node, "algorithm")[0];
-    if (calculator_type == "pfm") {
-      ryml::NodeRef config_node = getConfigValue<ryml::NodeRef>(config_root_node, "pfm")[0];
-      control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<PotentialFieldMethod>(obstacle, config_node));
-    }
-  } catch (ConfigError& ex) {
-    ROS_ERROR_STREAM_NAMED("control_force_provider", "Exception: " << ex.what());
+  std::string obstacle_type = getConfigValue<std::string>(config_root_node, "obstacle_type")[0];
+  boost::shared_ptr<Obstacle> obstacle;
+  if (obstacle_type == "simulated") {
+    ryml::NodeRef config_node = getConfigValue<ryml::NodeRef>(config_root_node, "simulated_obstacle")[0];
+    obstacle = boost::static_pointer_cast<Obstacle>(boost::make_shared<SimulatedObstacle>(config_node));
+  }
+  std::string calculator_type = getConfigValue<std::string>(config_root_node, "algorithm")[0];
+  if (calculator_type == "pfm") {
+    ryml::NodeRef config_node = getConfigValue<ryml::NodeRef>(config_root_node, "pfm")[0];
+    control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<PotentialFieldMethod>(obstacle, config_node));
   }
   if (config_root_node.has_child("visualize") && getConfigValue<bool>(config_root_node, "visualize")[0]) {
     visualizer_ = boost::make_shared<Visualizer>(node_handle_, control_force_calculator_);

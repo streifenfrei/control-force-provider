@@ -35,7 +35,8 @@ template <>
 inline std::vector<ryml::NodeRef> getConfigValue(const ryml::NodeRef &config, const std::string &key) {
   ryml::csubstr key_r = to_csubstr(key);
   if (!config.has_child(key_r)) {
-    throw ConfigError("Missing key: " + key);
+    ROS_ERROR_STREAM_NAMED("control_force_provider", "ConfigError: Missing key '" << key << "'");
+    throw ConfigError("Missing key '" + key + "'");
   }
   ryml::NodeRef node = config[key_r];
   std::vector<ryml::NodeRef> value;
