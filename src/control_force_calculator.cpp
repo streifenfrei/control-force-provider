@@ -112,8 +112,10 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacl
 void ReinforcementLearningAgent::calculationRunnable() { calculation_promise_.set_value(getAction()); }
 
 void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
-  if (ros::Time::now() - last_calculation_ > interval_duration_) {
+  ros::Time now = ros::Time::now();
+  if (now - last_calculation_ > interval_duration_) {
     if (calculation_future_.wait_for(boost::chrono::seconds(0)) == boost::future_status::ready) {
+      last_calculation_ = now;
       current_force_ = calculation_future_.get();
       calculation_promise_ = {};
       calculation_future_ = calculation_promise_.get_future();
