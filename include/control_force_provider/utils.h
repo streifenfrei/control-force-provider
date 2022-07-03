@@ -6,9 +6,19 @@
 
 namespace control_force_provider {
 namespace exceptions {
-class ConfigError : public std::runtime_error {
+class Error : public std::runtime_error {
  public:
-  explicit ConfigError(const std::string &message) : runtime_error(message) { ROS_ERROR_STREAM_NAMED("control_force_provider", "ConfigError: " << message); }
+  explicit Error(const std::string &message, const std::string &error_type) : runtime_error(message) {
+    ROS_ERROR_STREAM_NAMED("control_force_provider", error_type << ": " << message);
+  }
+};
+class ConfigError : Error {
+ public:
+  explicit ConfigError(const std::string &message) : Error(message, "ConfigError") {}
+};
+class PythonError : Error {
+ public:
+  explicit PythonError(const std::string &message) : Error(message, "PythonError") {}
 };
 }  // namespace exceptions
 

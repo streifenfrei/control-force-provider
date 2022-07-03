@@ -62,6 +62,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator, PythonEnvironm
  private:
   const ros::Duration interval_duration_;
   const bool train_;
+  const std::string output_dir_;
   Eigen::Vector4d current_force_;
   ros::Time last_calculation_;
   boost::future<Eigen::Vector4d> calculation_future_;
@@ -70,7 +71,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator, PythonEnvironm
   void calculationRunnable();
 
  protected:
-  PythonObject networks_module_;
+  PythonObject networks_module;
   virtual Eigen::Vector4d getAction() = 0;
 
  public:

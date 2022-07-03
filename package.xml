@@ -17,4 +17,6 @@
   <depend>eigen_conversions</depend>
   <depend>rviz_visual_tools</depend>
 
+  <exec_depend>torch</exec_depend>
+
 </package>
