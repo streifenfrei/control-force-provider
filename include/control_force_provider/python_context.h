@@ -7,60 +7,71 @@
 // https://www.codeproject.com/Articles/820116/Embedding-Python-program-in-a-C-Cplusplus-code
 using namespace control_force_provider::exceptions;
 namespace control_force_provider::backend {
+class PythonObject {
+ private:
+  PyObject* p;
+
+ public:
+  PythonObject() : p(nullptr) {}
+
+  PythonObject(PyObject* _p) : p(_p) {}
+
+  ~PythonObject() {
+    if (p) Py_DECREF(p);
+  }
+
+  PyObject* getObject() { return p; }
+
+  PyObject* addRef() {
+    if (p) {
+      Py_INCREF(p);
+    }
+    return p;
+  }
+
+  PyObject* operator->() { return p; }
+
+  operator PyObject*() { return p; }
+
+  PyObject* operator=(PyObject* pp) {
+    p = pp;
+    return p;
+  }
+
+  explicit operator bool() { return p != nullptr; }
+
+  PyObject* callFunction(const std::string& function_name, PyObject* args = nullptr, PyObject* kwargs = nullptr) {
+    if (!p) throw PythonError("Failed to call python function '" + function_name + "': Parent object is NULL.");
+    PyObject* function = PyObject_GetAttrString(p, function_name.c_str());
+    if (function) {
+      if (!args) args = PyTuple_New(0);
+      if (PyMethod_Check(function)) {
+        function = PyMethod_Function(function);
+        unsigned int num_args = PyTuple_Size(args) + 1;
+        PyObject* method_args = PyTuple_New(num_args);
+        addRef();
+        PyTuple_SetItem(method_args, 0, p);
+        for (size_t i = 1; i < num_args; i++) {
+          PyTuple_SetItem(method_args, i, PyTuple_GetItem(args, i - 1));
+        }
+        args = method_args;
+      }
+      if (PyCallable_Check(function)) {
+        PyObject* result = PyObject_Call(function, args, kwargs);
+        if (PyErr_Occurred()) {
+          PyErr_Print();
+          throw PythonError("Failed to call python function '" + function_name + "': Python exception occurred (see message above).");
+        }
+        if (!result) throw PythonError("Failed to call python function '" + function_name + "': PyObject_Call returned NULL without exception.");
+        return result;
+      }
+    }
+    throw PythonError("Failed to call python function '" + function_name + "': Could not find such an attribute.");
+  }
+};
+
 class PythonEnvironment {
  protected:
-  class PythonObject {
-   private:
-    PyObject* p;
-
-   public:
-    PythonObject() : p(nullptr) {}
-
-    PythonObject(PyObject* _p) : p(_p) {}
-
-    ~PythonObject() { Release(); }
-
-    PyObject* getObject() { return p; }
-
-    PyObject* setObject(PyObject* _p) { return (p = _p); }
-
-    PyObject* AddRef() {
-      if (p) {
-        Py_INCREF(p);
-      }
-      return p;
-    }
-
-    void Release() {
-      if (p) {
-        Py_DECREF(p);
-      }
-
-      p = nullptr;
-    }
-
-    PyObject* operator->() { return p; }
-
-    bool is() { return p != nullptr; }
-
-    operator PyObject*() { return p; }
-
-    PyObject* operator=(PyObject* pp) {
-      p = pp;
-      return p;
-    }
-
-    explicit operator bool() { return p != nullptr; }
-
-    PythonObject callFunction(const std::string& function_name, PythonObject args = nullptr) {
-      PythonObject function = PyObject_GetAttrString(p, function_name.c_str());
-      if (function) {
-        if (PyMethod_Check(function)) function = PyMethod_Function(function);
-        if (PyCallable_Check(function)) return PyObject_CallObject(function, args);
-      }
-      throw PythonError("Failed to call python function '" + function_name + "'");
-    }
-  };
   PythonEnvironment() { Py_Initialize(); }
   ~PythonEnvironment() { Py_Finalize(); }
   static PythonObject loadPythonModule(const std::string& module_name) {
@@ -69,5 +80,4 @@ class PythonEnvironment {
     return py_module;
   }
 };
-
 }  // namespace control_force_provider::backend
