@@ -70,7 +70,7 @@ class StateProvider {
 
  public:
   StateProvider(int obstacle_history_length);
-  PyObject* createPythonState(const Eigen::Vector3d& ee_position, const Eigen::Vector3d& ee_velocity, const Eigen::Vector3d& robot_rcm,
+  PyObject* createPythonState(const Eigen::Vector3d& ee_position, /*const Eigen::Vector3d& ee_velocity,*/ const Eigen::Vector3d& robot_rcm,
                               const Eigen::Vector3d& obstacle_position, const Eigen::Vector3d& obstacle_rcm);
   ~StateProvider() = default;
   int getStateDim() { return state_dim_; };

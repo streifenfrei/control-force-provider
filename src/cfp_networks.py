@@ -90,10 +90,6 @@ class DQNContext(RLContext):
         self.target_network_update_rate = target_network_update_rate
 
     def update(self, state):
-        print(state)
-        print("moin")
-
-        print(type(self))
         self.replay_buffer.push(self.last_state, self.action, state, self.reward_function(state))
         self.last_state = state
         if len(self.replay_buffer) >= self.batch_size:

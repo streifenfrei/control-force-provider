@@ -98,7 +98,7 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
   force = {force3d[0], force3d[1], force3d[2], 0};
 }
 
-StateProvider::StateProvider(int obstacle_history_length) : obstacle_history_length_(obstacle_history_length), state_dim_(12 + 3 * obstacle_history_length) {}
+StateProvider::StateProvider(int obstacle_history_length) : obstacle_history_length_(obstacle_history_length), state_dim_(9 + 3 * obstacle_history_length) {}
 
 void StateProvider::updateObstacleHistory(const Eigen::Vector3d& obstacle_position) {
   do obstacle_history_.push_back(obstacle_position);
@@ -106,7 +106,7 @@ void StateProvider::updateObstacleHistory(const Eigen::Vector3d& obstacle_positi
   obstacle_history_.pop_front();
 }
 
-PyObject* StateProvider::createPythonState(const Eigen::Vector3d& ee_position, const Eigen::Vector3d& ee_velocity, const Eigen::Vector3d& robot_rcm,
+PyObject* StateProvider::createPythonState(const Eigen::Vector3d& ee_position, /*const Eigen::Vector3d& ee_velocity,*/ const Eigen::Vector3d& robot_rcm,
                                            const Eigen::Vector3d& obstacle_position, const Eigen::Vector3d& obstacle_rcm) {
   updateObstacleHistory(obstacle_position);
   PyObject* py_state_ = PyTuple_New(state_dim_);
@@ -114,9 +114,9 @@ PyObject* StateProvider::createPythonState(const Eigen::Vector3d& ee_position, c
   PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_position[0]));
   PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_position[1]));
   PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_position[2]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_velocity[0]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_velocity[1]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_velocity[2]));
+  // PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_velocity[0]));
+  // PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_velocity[1]));
+  // PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_velocity[2]));
   PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(robot_rcm[0]));
   PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(robot_rcm[1]));
   PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(robot_rcm[2]));
@@ -189,8 +189,7 @@ Vector4d DeepQNetworkAgent::getAction() {
     Vector4d obstacle_position;
     obstacle->getPosition(obstacle_position);
     PythonObject py_action = training_context_.callFunction(
-        "update",
-        Py_BuildValue("(O)", state_provider.createPythonState(ee_position.head(3), Vector3d(1, 1, 1), rcm, obstacle_position.head(3), obstacle->getRCM())));
+        "update", Py_BuildValue("(O)", state_provider.createPythonState(ee_position.head(3), rcm, obstacle_position.head(3), obstacle->getRCM())));
     return {PyFloat_AsDouble(PyTuple_GetItem(py_action, 0)), PyFloat_AsDouble(PyTuple_GetItem(py_action, 1)), PyFloat_AsDouble(PyTuple_GetItem(py_action, 2)),
             0};
   } else {
