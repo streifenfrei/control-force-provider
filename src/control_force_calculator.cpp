@@ -18,11 +18,11 @@ PotentialFieldMethod::PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle
       min_rcm_distance_(utils::getConfigValue<double>(config, "min_rcm_distance")[0]) {}
 
 void PotentialFieldMethod::getForceImpl(Vector4d& force) {
-  Vector4d obstacle_position4d;
-  obstacle_->getPosition(obstacle_position4d);
-  Vector3d obstacle_position = obstacle_position4d.head(3);
-  const Vector3d& goal3d = goal_.head(3);
-  const Vector3d& ee_position3d = ee_position_.head(3);
+  Vector4d obstacle_position;
+  obstacle->getPosition(obstacle_position);
+  Vector3d obstacle_position3d = obstacle_position.head(3);
+  const Vector3d& goal3d = goal.head(3);
+  const Vector3d& ee_position3d = ee_position.head(3);
   // attractive vector
   Vector3d attractive_vector = goal3d - ee_position3d;
   double ee_to_goal_distance = attractive_vector.norm();
@@ -36,10 +36,10 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
   //  for the vector between "robot" and "obstacle" we take the shortest line between both tools:
   //  tool1:                                                    l1 = a1 + t*b1
   //  tool2:                                                    l2 = a2 + s*b2
-  const Vector3d& a1 = rcm_;
+  const Vector3d& a1 = rcm;
   Vector3d b1 = ee_position3d - a1;
-  const Vector3d& a2 = obstacle_->getRCM();
-  Vector3d b2 = obstacle_position - a2;
+  const Vector3d& a2 = obstacle->getRCM();
+  Vector3d b2 = obstacle_position3d - a2;
   //  general vector between l1 and l2:                         v = a2 - a1 + sb2 - t*b1 = a' + s*b2 - t*b1
   Vector3d a_diff = a2 - a1;
   //  the shortest line is perpendicular to both tools (v•b1 = v•b2 = 0). We want to solve this LEQ for t and s:
@@ -101,8 +101,9 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
 ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config)
     : ControlForceCalculator(obstacle),
       interval_duration_(ros::Duration(utils::getConfigValue<double>(config, "interval_duration")[0] * 10e-4)),
-      train_(utils::getConfigValue<bool>(config, "train")[0]),
-      output_dir_(utils::getConfigValue<std::string>(config, "output_directory")[0]),
+      train(utils::getConfigValue<bool>(config, "train")[0]),
+      output_dir(utils::getConfigValue<std::string>(config, "output_directory")[0]),
+      state_provider(utils::getConfigValue<int>(config, "obstacle_history_length")[0]),
       last_calculation_(ros::Time::now()) {
   calculation_future_ = calculation_promise_.get_future();
   calculation_promise_.set_value(Vector4d(0, 0, 0, 0));

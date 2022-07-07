@@ -13,30 +13,32 @@
 
 namespace control_force_provider::backend {
 class ControlForceCalculator {
- protected:
-  Eigen::Vector4d ee_position_;
-  Eigen::Vector3d rcm_;
-  Eigen::Vector4d goal_;
+ private:
   bool goal_available_ = false;
-  boost::shared_ptr<Obstacle> obstacle_;
+
+ protected:
+  Eigen::Vector4d ee_position;
+  Eigen::Vector3d rcm;
+  Eigen::Vector4d goal;
+  boost::shared_ptr<Obstacle> obstacle;
   friend class Visualizer;
 
   virtual void getForceImpl(Eigen::Vector4d& force) = 0;
 
  public:
-  explicit ControlForceCalculator(boost::shared_ptr<Obstacle>& obstacle) : obstacle_(obstacle) {}
-  void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position) {
+  explicit ControlForceCalculator(boost::shared_ptr<Obstacle>& obstacle) : obstacle(obstacle) {}
+  void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position_) {
     if (!goal_available_) setGoal(ee_position);
-    ee_position_ = ee_position;
+    ee_position = ee_position_;
     getForceImpl(force);
   }
   virtual ~ControlForceCalculator() = default;
-  [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm_; }
-  void setRCM(const Eigen::Vector3d& rcm) { rcm_ = rcm; };
-  [[nodiscard]] const Eigen::Vector4d& getGoal() const { return goal_; }
-  void setGoal(const Eigen::Vector4d& goal) {
+  [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm; }
+  void setRCM(const Eigen::Vector3d& rcm_) { rcm = rcm_; };
+  [[nodiscard]] const Eigen::Vector4d& getGoal() const { return goal; }
+  void setGoal(const Eigen::Vector4d& goal_) {
     goal_available_ = true;
-    goal_ = goal;
+    goal = goal_;
   };
 };
 
@@ -61,8 +63,6 @@ class PotentialFieldMethod : public ControlForceCalculator {
 class ReinforcementLearningAgent : public ControlForceCalculator, PythonEnvironment {
  private:
   const ros::Duration interval_duration_;
-  const bool train_;
-  const std::string output_dir_;
   Eigen::Vector4d current_force_;
   ros::Time last_calculation_;
   boost::future<Eigen::Vector4d> calculation_future_;

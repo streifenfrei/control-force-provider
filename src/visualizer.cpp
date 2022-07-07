@@ -15,15 +15,15 @@ void Visualizer::callback(const ros::TimerEvent &event) {
   visual_tools_.deleteAllMarkers();
   // obstacle
   Eigen::Vector4d obstacle_position;
-  control_force_calculator_->obstacle_->getPosition(obstacle_position);
-  Eigen::Vector3d obstacle_rcm = control_force_calculator_->obstacle_->getRCM();
+  control_force_calculator_->obstacle->getPosition(obstacle_position);
+  Eigen::Vector3d obstacle_rcm = control_force_calculator_->obstacle->getRCM();
   visual_tools_.publishSphere(obstacle_rcm, rviz_visual_tools::BROWN);
   visual_tools_.publishLine(obstacle_rcm, obstacle_position.head(3), rviz_visual_tools::BROWN);
   // control_force_calculator
-  const Eigen::Vector4d& ee_position = control_force_calculator_->ee_position_;
-  const Eigen::Vector3d& robot_rcm = control_force_calculator_->rcm_;
+  const Eigen::Vector4d& ee_position = control_force_calculator_->ee_position;
+  const Eigen::Vector3d& robot_rcm = control_force_calculator_->rcm;
   visual_tools_.publishLine(robot_rcm, ee_position.head(3), rviz_visual_tools::PURPLE);
-  visual_tools_.publishSphere(control_force_calculator_->goal_.head(3), rviz_visual_tools::BLUE);
+  visual_tools_.publishSphere(control_force_calculator_->goal.head(3), rviz_visual_tools::BLUE);
   boost::shared_ptr<PotentialFieldMethod> pfm = boost::dynamic_pointer_cast<PotentialFieldMethod>(control_force_calculator_);
   if (pfm) {
     double distance = (pfm->point_on_l2_ - pfm->point_on_l1_).norm();
