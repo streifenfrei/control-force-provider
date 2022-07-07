@@ -7,6 +7,7 @@
 #include <boost/shared_ptr.hpp>
 #include <boost/thread.hpp>
 #include <boost/thread/future.hpp>
+#include <deque>
 
 #include "control_force_provider/python_context.h"
 #include "obstacle.h"
@@ -60,7 +61,22 @@ class PotentialFieldMethod : public ControlForceCalculator {
   ~PotentialFieldMethod() override = default;
 };
 
-class ReinforcementLearningAgent : public ControlForceCalculator, PythonEnvironment {
+class StateProvider {
+ private:
+  const int obstacle_history_length_;
+  const int state_dim_;
+  std::deque<Eigen::Vector3d> obstacle_history_;
+  void updateObstacleHistory(const Eigen::Vector3d& obstacle_position);
+
+ public:
+  StateProvider(int obstacle_history_length);
+  PyObject* createPythonState(const Eigen::Vector3d& ee_position, const Eigen::Vector3d& ee_velocity, const Eigen::Vector3d& robot_rcm,
+                              const Eigen::Vector3d& obstacle_position, const Eigen::Vector3d& obstacle_rcm);
+  ~StateProvider() = default;
+  int getStateDim() { return state_dim_; };
+};
+
+class ReinforcementLearningAgent : public ControlForceCalculator, protected PythonEnvironment {
  private:
   const ros::Duration interval_duration_;
   Eigen::Vector4d current_force_;
@@ -71,7 +87,11 @@ class ReinforcementLearningAgent : public ControlForceCalculator, PythonEnvironm
   void calculationRunnable();
 
  protected:
+  const bool train;
+  const std::string output_dir;
   PythonObject networks_module;
+  PythonObject settings_dict;
+  StateProvider state_provider;
   virtual Eigen::Vector4d getAction() = 0;
 
  public:
@@ -81,6 +101,9 @@ class ReinforcementLearningAgent : public ControlForceCalculator, PythonEnvironm
 };
 
 class DeepQNetworkAgent : public ReinforcementLearningAgent {
+ private:
+  PythonObject training_context_;
+
  protected:
   Eigen::Vector4d getAction() override;
 
