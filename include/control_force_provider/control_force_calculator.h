@@ -2,6 +2,7 @@
 #define BOOST_THREAD_PROVIDES_FUTURE
 
 #include <ros/ros.h>
+#include <torch/torch.h>
 
 #include <Eigen/Dense>
 #include <boost/shared_ptr.hpp>
@@ -9,7 +10,6 @@
 #include <boost/thread/future.hpp>
 #include <deque>
 
-#include "control_force_provider/python_context.h"
 #include "obstacle.h"
 
 namespace control_force_provider::backend {
@@ -70,13 +70,13 @@ class StateProvider {
 
  public:
   StateProvider(int obstacle_history_length);
-  PyObject* createPythonState(const Eigen::Vector3d& ee_position, /*const Eigen::Vector3d& ee_velocity,*/ const Eigen::Vector3d& robot_rcm,
-                              const Eigen::Vector3d& obstacle_position, const Eigen::Vector3d& obstacle_rcm);
+  torch::Tensor createState(const Eigen::Vector3d& ee_position, /*const Eigen::Vector3d& ee_velocity,*/ const Eigen::Vector3d& robot_rcm,
+                            const Eigen::Vector3d& obstacle_position, const Eigen::Vector3d& obstacle_rcm);
   ~StateProvider() = default;
   int getStateDim() { return state_dim_; };
 };
 
-class ReinforcementLearningAgent : public ControlForceCalculator, protected PythonEnvironment {
+class ReinforcementLearningAgent : public ControlForceCalculator {
  private:
   const ros::Duration interval_duration_;
   Eigen::Vector4d current_force_;
@@ -89,8 +89,10 @@ class ReinforcementLearningAgent : public ControlForceCalculator, protected Pyth
  protected:
   const bool train;
   const std::string output_dir;
-  PythonObject networks_module;
-  PythonObject settings_dict;
+  const double discount_factor;
+  const unsigned int batch_size;
+  const unsigned int updates_per_step;
+  const double max_force;
   StateProvider state_provider;
   virtual Eigen::Vector4d getAction() = 0;
 
@@ -101,10 +103,10 @@ class ReinforcementLearningAgent : public ControlForceCalculator, protected Pyth
 };
 
 class DeepQNetworkAgent : public ReinforcementLearningAgent {
- private:
-  PythonObject training_context_;
-
  protected:
+  const unsigned int layer_size;
+  const unsigned int replay_buffer_size;
+  const unsigned int target_network_update_rate;
   Eigen::Vector4d getAction() override;
 
  public:

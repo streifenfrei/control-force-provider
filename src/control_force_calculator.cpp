@@ -106,29 +106,12 @@ void StateProvider::updateObstacleHistory(const Eigen::Vector3d& obstacle_positi
   obstacle_history_.pop_front();
 }
 
-PyObject* StateProvider::createPythonState(const Eigen::Vector3d& ee_position, /*const Eigen::Vector3d& ee_velocity,*/ const Eigen::Vector3d& robot_rcm,
-                                           const Eigen::Vector3d& obstacle_position, const Eigen::Vector3d& obstacle_rcm) {
+torch::Tensor StateProvider::createState(const Eigen::Vector3d& ee_position, /*const Eigen::Vector3d& ee_velocity,*/ const Eigen::Vector3d& robot_rcm,
+                                         const Eigen::Vector3d& obstacle_position, const Eigen::Vector3d& obstacle_rcm) {
   updateObstacleHistory(obstacle_position);
-  PyObject* py_state_ = PyTuple_New(state_dim_);
+  torch::Tensor state{};
   unsigned int index = 0;
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_position[0]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_position[1]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_position[2]));
-  // PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_velocity[0]));
-  // PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_velocity[1]));
-  // PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(ee_velocity[2]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(robot_rcm[0]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(robot_rcm[1]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(robot_rcm[2]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(obstacle_rcm[0]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(obstacle_rcm[1]));
-  PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(obstacle_rcm[2]));
-  for (auto& obstacle : obstacle_history_) {
-    PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(obstacle[0]));
-    PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(obstacle[1]));
-    PyTuple_SetItem(py_state_, index++, PyFloat_FromDouble(obstacle[2]));
-  }
-  return py_state_;
+  return state;
 }
 
 ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config)
@@ -136,19 +119,14 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacl
       interval_duration_(ros::Duration(utils::getConfigValue<double>(config, "interval_duration")[0] * 10e-4)),
       train(utils::getConfigValue<bool>(config, "train")[0]),
       output_dir(utils::getConfigValue<std::string>(config, "output_directory")[0]),
+      discount_factor(utils::getConfigValue<double>(config, "discount_factor")[0]),
+      batch_size(utils::getConfigValue<int>(config, "batch_size")[0]),
+      updates_per_step(utils::getConfigValue<int>(config, "updates_per_step")[0]),
+      max_force(utils::getConfigValue<double>(config, "max_force")[0]),
       state_provider(utils::getConfigValue<int>(config, "obstacle_history_length")[0]),
       last_calculation_(ros::Time::now()) {
   calculation_future_ = calculation_promise_.get_future();
   calculation_promise_.set_value(Vector4d(0, 0, 0, 0));
-  networks_module = loadPythonModule("cfp_networks");
-  settings_dict = PyDict_New();
-  PyDict_SetItemString(settings_dict, "state_dim", PyLong_FromLong(1));
-  PyDict_SetItemString(settings_dict, "action_dim", PyLong_FromLong(1));
-  PyDict_SetItemString(settings_dict, "discount_factor", PyFloat_FromDouble(utils::getConfigValue<double>(config, "discount_factor")[0]));
-  PyDict_SetItemString(settings_dict, "batch_size", PyLong_FromLong(utils::getConfigValue<int>(config, "batch_size")[0]));
-  PyDict_SetItemString(settings_dict, "updates_per_step", PyLong_FromLong(utils::getConfigValue<int>(config, "updates_per_step")[0]));
-  PyDict_SetItemString(settings_dict, "max_force", PyFloat_FromDouble(utils::getConfigValue<double>(config, "max_force")[0]));
-  PyDict_SetItemString(settings_dict, "output_dir", PyUnicode_FromString(output_dir.c_str()));
 }
 
 void ReinforcementLearningAgent::calculationRunnable() { calculation_promise_.set_value(getAction()); }
@@ -174,24 +152,16 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
   force = current_force_;
 }
 
-DeepQNetworkAgent::DeepQNetworkAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config) : ReinforcementLearningAgent(obstacle, config) {
-  ryml::NodeRef dqn_config = utils::getConfigValue<ryml::NodeRef>(config, "dqn")[0];
-  if (train) {
-    PyDict_SetItemString(settings_dict, "layer_size", PyLong_FromLong(utils::getConfigValue<int>(dqn_config, "layer_size")[0]));
-    PyDict_SetItemString(settings_dict, "replay_buffer_size", PyLong_FromLong(utils::getConfigValue<int>(dqn_config, "replay_buffer_size")[0]));
-    PyDict_SetItemString(settings_dict, "target_network_update_rate", PyLong_FromLong(utils::getConfigValue<int>(dqn_config, "target_network_update_rate")[0]));
-    training_context_ = networks_module.callFunction("DQNContext", nullptr, settings_dict);
-  }
-}
+DeepQNetworkAgent::DeepQNetworkAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config)
+    : ReinforcementLearningAgent(obstacle, config),
+      layer_size(utils::getConfigValue<int>(utils::getConfigValue<ryml::NodeRef>(config, "dqn")[0], "layer_size")[0]),
+      replay_buffer_size(utils::getConfigValue<int>(utils::getConfigValue<ryml::NodeRef>(config, "dqn")[0], "replay_buffer_size")[0]),
+      target_network_update_rate(utils::getConfigValue<int>(utils::getConfigValue<ryml::NodeRef>(config, "dqn")[0], "target_network_update_rate")[0]) {}
 
 Vector4d DeepQNetworkAgent::getAction() {
   if (train) {
     Vector4d obstacle_position;
     obstacle->getPosition(obstacle_position);
-    PythonObject py_action = training_context_.callFunction(
-        "update", Py_BuildValue("(O)", state_provider.createPythonState(ee_position.head(3), rcm, obstacle_position.head(3), obstacle->getRCM())));
-    return {PyFloat_AsDouble(PyTuple_GetItem(py_action, 0)), PyFloat_AsDouble(PyTuple_GetItem(py_action, 1)), PyFloat_AsDouble(PyTuple_GetItem(py_action, 2)),
-            0};
   } else {
     return {};
   }

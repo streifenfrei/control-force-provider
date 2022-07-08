@@ -14,6 +14,8 @@ find_package(
 find_package(Eigen3 REQUIRED)
 find_package(ryml REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Development)
+find_package(Torch REQUIRED)
+set(CMAKE_CXX_FLAGS ${TORCH_CXX_FLAGS})
 
 catkin_package(
         INCLUDE_DIRS include
@@ -37,6 +39,7 @@ target_link_libraries(
         Eigen3::Eigen
         ryml::ryml
         Python3::Python
+        ${TORCH_LIBRARIES}
         ${catkin_LIBRARIES})
 
 target_include_directories(
