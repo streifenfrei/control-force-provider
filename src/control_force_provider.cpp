@@ -11,7 +11,7 @@ using namespace Eigen;
 using namespace control_force_provider::utils;
 using namespace control_force_provider::exceptions;
 namespace control_force_provider {
-ryml::Tree ControlForceProvider::loadConfig() {
+void ControlForceProvider::loadConfig() {
   std::string config_file;
   if (!node_handle_.getParam("control_force_provider/config", config_file))
     throw ConfigError("Please provide a config file as ROS parameter: control_force_provider/config");
@@ -19,11 +19,12 @@ ryml::Tree ControlForceProvider::loadConfig() {
   std::stringstream buffer;
   buffer << stream.rdbuf();
   std::string content = buffer.str();
-  return ryml::parse_in_arena(to_csubstr(content));
+  config_ = boost::make_shared<ryml::Tree>(ryml::parse_in_arena(to_csubstr(content)));
 }
 
-ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider"), control_force_calculator_(nullptr), config_(loadConfig()) {
-  ryml::NodeRef config_root_node = config_.rootref();
+ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider") {
+  loadConfig();
+  ryml::NodeRef config_root_node = config_->rootref();
   std::string obstacle_type = getConfigValue<std::string>(config_root_node, "obstacle_type")[0];
   boost::shared_ptr<Obstacle> obstacle;
   // load obstacle
@@ -50,12 +51,18 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
   if (config_root_node.has_child("visualize") && getConfigValue<bool>(config_root_node, "visualize")[0]) {
     visualizer_ = boost::make_shared<Visualizer>(node_handle_, control_force_calculator_);
   }
-  goal_subscriber_ =
-      node_handle_.subscribe("control_force_provider/goal", 5, &ControlForceProvider::goalCallback, this, ros::TransportHints().reliable().tcpNoDelay());
+  rcm_subscriber_ = node_handle_.subscribe(getConfigValue<std::string>(config_root_node, "rcm_topic")[0], 100, &ControlForceProvider::rcmCallback, this);
+  goal_subscriber_ = node_handle_.subscribe("control_force_provider/goal", 100, &ControlForceProvider::goalCallback, this);
   spinner_.start();
 }
 
 void ControlForceProvider::getForce(Vector4d& force, const Vector4d& ee_position) { control_force_calculator_->getForce(force, ee_position); }
+
+void ControlForceProvider::rcmCallback(const geometry_msgs::PointStamped& rcm) {
+  Vector3d rcm_eigen;
+  tf::pointMsgToEigen(rcm.point, rcm_eigen);
+  control_force_calculator_->setRCM(rcm_eigen);
+}
 
 void ControlForceProvider::goalCallback(const geometry_msgs::Point& goal) {
   Vector3d goal_eigen;
