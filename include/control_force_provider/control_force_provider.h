@@ -1,6 +1,7 @@
 #pragma once
 
 #include <geometry_msgs/Point.h>
+#include <geometry_msgs/PointStamped.h>
 #include <ros/ros.h>
 
 #include <Eigen/Dense>
@@ -25,14 +26,16 @@ class ROSNode {
 class ControlForceProvider : ROSNode {
  private:
   boost::shared_ptr<ControlForceCalculator> control_force_calculator_;
-  const ryml::Tree config_;
+  boost::shared_ptr<ryml::Tree> config_;
   ros::NodeHandle node_handle_{};
   ros::AsyncSpinner spinner_{1};
+  ros::Subscriber rcm_subscriber_;
   ros::Subscriber goal_subscriber_;
   boost::shared_ptr<Visualizer> visualizer_;
-  ryml::Tree loadConfig();
+  void loadConfig();
 
   void goalCallback(const geometry_msgs::Point& goal);  // TODO: handle Vector4d goal (include roll)
+  void rcmCallback(const geometry_msgs::PointStamped& rcm);
 
  public:
   ControlForceProvider();
