@@ -22,7 +22,8 @@ void Visualizer::callback(const ros::TimerEvent &event) {
   // control_force_calculator
   const Eigen::Vector4d& ee_position = control_force_calculator_->ee_position_;
   const Eigen::Vector3d& robot_rcm = control_force_calculator_->rcm_;
-  visual_tools_.publishLine(robot_rcm, ee_position.head(3), rviz_visual_tools::PURPLE);
+  if (!ee_position.isZero())  // TODO: fix weird nan/0 numbers in goal and ee_position
+    visual_tools_.publishLine(robot_rcm, ee_position.head(3), rviz_visual_tools::PURPLE);
   visual_tools_.publishSphere(control_force_calculator_->goal_.head(3), rviz_visual_tools::BLUE);
   boost::shared_ptr<PotentialFieldMethod> pfm = boost::dynamic_pointer_cast<PotentialFieldMethod>(control_force_calculator_);
   if (pfm) {
