@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="config" default="$(find control_force_provider)/default.config"/>
+    <arg name="goal" default="0.3 0.0 0.3"/>
+    <param name="control_force_provider/config" value="$(arg config)" type="str"/>
+    <node pkg="control_force_provider"
+          type="service"
+          name="control_force_provider"
+          respawn="false" output="screen"/>
+    <node pkg="rostopic" type="rostopic" name="rostopic" args="pub /control_force_provider/goal geometry_msgs/Point -- $(arg goal)"/>
+</launch>
