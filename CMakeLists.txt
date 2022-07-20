@@ -42,3 +42,6 @@ target_include_directories(
         ${PROJECT_NAME} PUBLIC
         include
         ${catkin_INCLUDE_DIRS})
+
+add_executable(service src/service.cpp)
+target_link_libraries(service ${PROJECT_NAME})
