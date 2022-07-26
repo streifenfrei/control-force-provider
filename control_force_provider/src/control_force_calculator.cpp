@@ -100,33 +100,68 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
 
 StateProvider::StateProvider(int obstacle_history_length) : obstacle_history_length_(obstacle_history_length), state_dim_(9 + 3 * obstacle_history_length) {}
 
-void StateProvider::updateObstacleHistory(const Eigen::Vector3d& obstacle_position) {
+void StateProvider::updateObstacleHistory(const Vector4d& obstacle_position) {
   do obstacle_history_.push_back(obstacle_position);
   while (obstacle_history_.size() <= obstacle_history_length_);
   obstacle_history_.pop_front();
 }
 
-torch::Tensor StateProvider::createState(const Eigen::Vector3d& ee_position, /*const Eigen::Vector3d& ee_velocity,*/ const Eigen::Vector3d& robot_rcm,
-                                         const Eigen::Vector3d& obstacle_position, const Eigen::Vector3d& obstacle_rcm) {
+torch::Tensor StateProvider::createState(const Vector4d& ee_position, /*const Vector3d& ee_velocity,*/ const Vector3d& robot_rcm,
+                                         const Vector4d& obstacle_position, const Vector3d& obstacle_rcm) {
   updateObstacleHistory(obstacle_position);
-  torch::Tensor state{};
+  auto options = torch::TensorOptions().dtype(torch::kFloat64);
+  torch::Tensor state = torch::empty(state_dim_, options);
+  auto state_accessor = state.accessor<double, 1>();
   unsigned int index = 0;
+  state_accessor[index++] = robot_rcm[0];
+  state_accessor[index++] = robot_rcm[1];
+  state_accessor[index++] = robot_rcm[2];
+  state_accessor[index++] = ee_position[0];
+  state_accessor[index++] = ee_position[1];
+  state_accessor[index++] = ee_position[2];
+  state_accessor[index++] = obstacle_rcm[0];
+  state_accessor[index++] = obstacle_rcm[1];
+  state_accessor[index++] = obstacle_rcm[2];
+  for (auto& obstacle : obstacle_history_) {
+    state_accessor[index++] = obstacle[0];
+    state_accessor[index++] = obstacle[1];
+    state_accessor[index++] = obstacle[2];
+  }
   return state;
 }
 
-ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config)
+ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config, ros::NodeHandle& node_handle)
     : ControlForceCalculator(obstacle),
       interval_duration_(ros::Duration(utils::getConfigValue<double>(config, "interval_duration")[0] * 10e-4)),
       train(utils::getConfigValue<bool>(config, "train")[0]),
       output_dir(utils::getConfigValue<std::string>(config, "output_directory")[0]),
-      discount_factor(utils::getConfigValue<double>(config, "discount_factor")[0]),
-      batch_size(utils::getConfigValue<int>(config, "batch_size")[0]),
-      updates_per_step(utils::getConfigValue<int>(config, "updates_per_step")[0]),
-      max_force(utils::getConfigValue<double>(config, "max_force")[0]),
       state_provider(utils::getConfigValue<int>(config, "obstacle_history_length")[0]),
       last_calculation_(ros::Time::now()) {
   calculation_future_ = calculation_promise_.get_future();
-  calculation_promise_.set_value(Vector4d(0, 0, 0, 0));
+  calculation_promise_.set_value(Vector4d::Zero());
+  if (train) {
+    training_service_client = boost::make_shared<ros::ServiceClient>(node_handle.serviceClient<control_force_provider_msgs::UpdateNetwork>("update_network"));
+  }
+}
+
+Vector4d ReinforcementLearningAgent::getAction() {
+  if (train) {
+    ROS_WARN_STREAM("MOIN");
+    Vector4d obstacle_position;
+    obstacle->getPosition(obstacle_position);
+    torch::Tensor state_tensor = state_provider.createState(ee_position, rcm, obstacle_position, obstacle->getRCM());
+    auto state_tensor_accessor = state_tensor.accessor<double, 1>();
+    std::vector<double> state_vector;
+    for (size_t i = 0; i < state_provider.getStateDim(); i++) state_vector.push_back(state_tensor_accessor[i]);
+    control_force_provider_msgs::UpdateNetwork srv;
+    srv.request.state = state_vector;
+    if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/rl", "Failed to call training service.");
+    return Vector4d(srv.response.action.data());
+  } else {
+    // TODO: extrapolate current state during inference
+    // torch::Tensor state = getActionInference(...);
+    return Vector4d::Zero();
+  }
 }
 
 void ReinforcementLearningAgent::calculationRunnable() { calculation_promise_.set_value(getAction()); }
@@ -152,18 +187,8 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
   force = current_force_;
 }
 
-DeepQNetworkAgent::DeepQNetworkAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config)
-    : ReinforcementLearningAgent(obstacle, config),
-      layer_size(utils::getConfigValue<int>(utils::getConfigValue<ryml::NodeRef>(config, "dqn")[0], "layer_size")[0]),
-      replay_buffer_size(utils::getConfigValue<int>(utils::getConfigValue<ryml::NodeRef>(config, "dqn")[0], "replay_buffer_size")[0]),
-      target_network_update_rate(utils::getConfigValue<int>(utils::getConfigValue<ryml::NodeRef>(config, "dqn")[0], "target_network_update_rate")[0]) {}
+DeepQNetworkAgent::DeepQNetworkAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config, ros::NodeHandle& node_handle)
+    : ReinforcementLearningAgent(obstacle, config, node_handle) {}
 
-Vector4d DeepQNetworkAgent::getAction() {
-  if (train) {
-    Vector4d obstacle_position;
-    obstacle->getPosition(obstacle_position);
-  } else {
-    return {};
-  }
-}
+torch::Tensor DeepQNetworkAgent::getActionInference(torch::Tensor& state) {}
 }  // namespace control_force_provider::backend

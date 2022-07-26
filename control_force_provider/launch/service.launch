@@ -8,4 +8,8 @@
           name="control_force_provider"
           respawn="false" output="screen"/>
     <node pkg="rostopic" type="rostopic" name="rostopic" args="pub /control_force_provider/goal geometry_msgs/Point -- $(arg goal)"/>
+    <node pkg="control_force_provider"
+          type="rl_training"
+          name="rl_training"
+          respawn="false" output="screen"/>
 </launch>

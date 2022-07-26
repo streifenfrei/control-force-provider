@@ -71,11 +71,21 @@ class PythonObject {
 };
 
 class PythonEnvironment {
- protected:
-  PythonEnvironment() { Py_Initialize(); }
-  ~PythonEnvironment() { Py_Finalize(); }
+ private:
+  inline static unsigned int use_counter = 0;
+
+ public:
+  PythonEnvironment() {
+    if (use_counter == 0) Py_Initialize();
+    use_counter++;
+  }
+  ~PythonEnvironment() {
+    use_counter--;
+    if (use_counter == 0) Py_Finalize();
+  }
   static PythonObject loadPythonModule(const std::string& module_name) {
     PythonObject py_module = PyImport_ImportModule(module_name.c_str());
+    if (PyErr_Occurred()) PyErr_Print();
     if (!py_module) throw PythonError("Failed to import the python module '" + module_name + "'");
     return py_module;
   }

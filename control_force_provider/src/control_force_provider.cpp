@@ -42,7 +42,8 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
     ryml::NodeRef config_node = getConfigValue<ryml::NodeRef>(config_root_node, "rl")[0];
     std::string rl_type = getConfigValue<std::string>(config_node, "type")[0];
     if (rl_type == "dqn") {
-      control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<DeepQNetworkAgent>(obstacle, config_node));
+      control_force_calculator_ =
+          boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<DeepQNetworkAgent>(obstacle, config_node, node_handle_));
     } else
       throw ConfigError("Unknown RL type '" + rl_type + "'");
   } else

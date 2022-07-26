@@ -10,6 +10,7 @@
 #include <boost/thread/future.hpp>
 #include <deque>
 
+#include "control_force_provider_msgs/UpdateNetwork.h"
 #include "obstacle.h"
 
 namespace control_force_provider::backend {
@@ -55,9 +56,11 @@ class PotentialFieldMethod : public ControlForceCalculator {
   Eigen::Vector3d point_on_l2_;
   friend class Visualizer;
 
+ protected:
+  void getForceImpl(Eigen::Vector4d& force) override;
+
  public:
   PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config);
-  void getForceImpl(Eigen::Vector4d& force) override;
   ~PotentialFieldMethod() override = default;
 };
 
@@ -65,51 +68,47 @@ class StateProvider {
  private:
   const int obstacle_history_length_;
   const int state_dim_;
-  std::deque<Eigen::Vector3d> obstacle_history_;
-  void updateObstacleHistory(const Eigen::Vector3d& obstacle_position);
+  std::deque<Eigen::Vector4d> obstacle_history_;
+  void updateObstacleHistory(const Eigen::Vector4d& obstacle_position);
 
  public:
-  StateProvider(int obstacle_history_length);
-  torch::Tensor createState(const Eigen::Vector3d& ee_position, /*const Eigen::Vector3d& ee_velocity,*/ const Eigen::Vector3d& robot_rcm,
-                            const Eigen::Vector3d& obstacle_position, const Eigen::Vector3d& obstacle_rcm);
+  explicit StateProvider(int obstacle_history_length);
+  torch::Tensor createState(const Eigen::Vector4d& ee_position, /*const Eigen::Vector3d& ee_velocity,*/ const Eigen::Vector3d& robot_rcm,
+                            const Eigen::Vector4d& obstacle_position, const Eigen::Vector3d& obstacle_rcm);
   ~StateProvider() = default;
   int getStateDim() { return state_dim_; };
 };
 
 class ReinforcementLearningAgent : public ControlForceCalculator {
  private:
+  const bool train;
   const ros::Duration interval_duration_;
   Eigen::Vector4d current_force_;
   ros::Time last_calculation_;
   boost::future<Eigen::Vector4d> calculation_future_;
   boost::promise<Eigen::Vector4d> calculation_promise_;
 
+  Eigen::Vector4d getAction();
   void calculationRunnable();
 
  protected:
-  const bool train;
   const std::string output_dir;
-  const double discount_factor;
-  const unsigned int batch_size;
-  const unsigned int updates_per_step;
-  const double max_force;
   StateProvider state_provider;
-  virtual Eigen::Vector4d getAction() = 0;
+  boost::shared_ptr<ros::ServiceClient> training_service_client;
+
+  virtual torch::Tensor getActionInference(torch::Tensor& state) = 0;
+  void getForceImpl(Eigen::Vector4d& force) override;
 
  public:
-  ReinforcementLearningAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config);
-  void getForceImpl(Eigen::Vector4d& force) override;
+  ReinforcementLearningAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config, ros::NodeHandle& node_handle);
   ~ReinforcementLearningAgent() override = default;
 };
 
 class DeepQNetworkAgent : public ReinforcementLearningAgent {
  protected:
-  const unsigned int layer_size;
-  const unsigned int replay_buffer_size;
-  const unsigned int target_network_update_rate;
-  Eigen::Vector4d getAction() override;
+  torch::Tensor getActionInference(torch::Tensor& state) override;
 
  public:
-  DeepQNetworkAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config);
+  DeepQNetworkAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config, ros::NodeHandle& node_handle);
 };
 }  // namespace control_force_provider::backend

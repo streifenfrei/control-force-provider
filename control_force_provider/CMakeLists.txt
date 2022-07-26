@@ -9,13 +9,15 @@ find_package(
         geometry_msgs
         eigen_conversions
         rviz_visual_tools
+        control_force_provider_msgs
         roscpp)
 
 find_package(Eigen3 REQUIRED)
 find_package(ryml REQUIRED)
-find_package(Python3 REQUIRED COMPONENTS Development)
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS ${TORCH_CXX_FLAGS})
+
+catkin_python_setup()
 
 catkin_package(
         INCLUDE_DIRS include
@@ -24,8 +26,8 @@ catkin_package(
         geometry_msgs
         eigen_conversions
         rviz_visual_tools
-        roscpp
-        INCLUDE_DIRS include)
+        control_force_provider_msgs
+        roscpp)
 
 add_library(
         ${PROJECT_NAME}
@@ -38,7 +40,6 @@ target_link_libraries(
         ${PROJECT_NAME} PUBLIC
         Eigen3::Eigen
         ryml::ryml
-        Python3::Python
         ${TORCH_LIBRARIES}
         ${catkin_LIBRARIES})
 
@@ -49,4 +50,6 @@ target_include_directories(
 
 add_executable(service src/service.cpp)
 target_link_libraries(service ${PROJECT_NAME})
-catkin_python_setup()
+
+catkin_install_python(PROGRAMS scripts/rl_training
+        DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})

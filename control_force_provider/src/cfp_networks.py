@@ -73,15 +73,15 @@ class DQN(nn.Module):
 
 
 class RLContext:
-    def __init__(self, state_dim, action_dim, discount_factor, batch_size, updates_per_step, max_force, output_dir, **kwargs):
+    def __init__(self, state_dim, action_dim, discount_factor, batch_size, updates_per_step, max_force, output_directory, **kwargs):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.discount_factor = discount_factor
         self.batch_size = batch_size
         self.updates_per_step = updates_per_step
         self.max_force = max_force
-        self.output_dir = output_dir
-        self.log_file = os.path.join(output_dir, "cfp_rl.log")
+        self.output_dir = output_directory
+        self.log_file = os.path.join(output_directory, "cfp_rl.log")
         self.reward_function = RewardFunction()
         self.last_state = None
         self.action = None
@@ -120,7 +120,6 @@ class DQNContext(RLContext):
                 loss.backward()
                 clip_grad_norm_(self.dqn_policy.parameters(), 1)
                 self.optimizer.step()
-
         self.epoch += 1
         if self.epoch % self.target_network_update_rate == 0:
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
@@ -128,19 +127,8 @@ class DQNContext(RLContext):
         with torch.no_grad():
             self.action = self.dqn_policy(state.unsqueeze(0))[0].squeeze(0)
         self.dqn_policy.train()
+        print(self.action.tolist)
         return self.action.tolist()
 
 
-import yaml
-
-
-def test():
-    with open("/home/dave/Documents/NCT/endomersion_deployment/endomersion/catkin_ws/src/control_force_provider/default.config", "r") as f:
-        config = yaml.safe_load(f)["rl"]
-        config["output_dir"] = config["output_directory"]
-        config["state_dim"] = 9
-        config["action_dim"] = 3
-        config_dqn = config["dqn"]
-        context = DQNContext(**config_dqn, **config)
-        for i in range(256):
-            context.update((1., 1., 1., 1., 1., 1., 1., 1., 1.))
+context_mapping = {"dqn": DQNContext}
