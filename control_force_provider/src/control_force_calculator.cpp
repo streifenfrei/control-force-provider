@@ -146,7 +146,6 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacl
 
 Vector4d ReinforcementLearningAgent::getAction() {
   if (train) {
-    ROS_WARN_STREAM("MOIN");
     Vector4d obstacle_position;
     obstacle->getPosition(obstacle_position);
     torch::Tensor state_tensor = state_provider.createState(ee_position, rcm, obstacle_position, obstacle->getRCM());
@@ -170,7 +169,6 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
   ros::Time now = ros::Time::now();
   if (now - last_calculation_ > interval_duration_) {
     if (train) {
-      // TODO pause the simulation here
       current_force_ = getAction();
     } else {
       if (calculation_future_.wait_for(boost::chrono::seconds(0)) == boost::future_status::ready) {
@@ -181,6 +179,13 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
         boost::thread calculation_thread{&ReinforcementLearningAgent::calculationRunnable, this};
       } else {
         ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "The RL agent exceeded the time limit!");
+      }
+    }
+    if (!current_force_.allFinite() || current_force_.hasNaN()) {
+      ROS_WARN_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "The force vector contains Infs or NaNs.");
+      for (size_t i = 0; i < 4; i++) {
+        double value = current_force_[i];
+        if (!std::isfinite(value) || std::isnan(value)) current_force_[i] = 0;
       }
     }
   }
