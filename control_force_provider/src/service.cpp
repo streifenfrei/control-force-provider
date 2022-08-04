@@ -34,6 +34,7 @@ bool setRealtimePriority() {
 int main(int argc, char* argv[]) {
   control_force_provider::ControlForceProvider cfp;
   asio::io_context io_context_{};
+  remove(socket_file);
   asio::local::stream_protocol::endpoint uds_ep_{socket_file};
   asio::local::stream_protocol::acceptor acceptor(io_context_, uds_ep_);
   asio::local::stream_protocol::socket uds_socket_{io_context_};
