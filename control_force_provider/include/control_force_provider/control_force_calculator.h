@@ -16,6 +16,7 @@
 namespace control_force_provider::backend {
 class ControlForceCalculator {
  private:
+  bool rcm_available_ = false;
   bool goal_available_ = false;
 
  protected:
@@ -31,12 +32,17 @@ class ControlForceCalculator {
   explicit ControlForceCalculator(boost::shared_ptr<Obstacle>& obstacle) : obstacle(obstacle) {}
   void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position_) {
     if (!goal_available_) setGoal(ee_position);
-    ee_position = ee_position_;
-    getForceImpl(force);
+    if (rcm_available_) {
+      ee_position = ee_position_;
+      getForceImpl(force);
+    }
   }
   virtual ~ControlForceCalculator() = default;
   [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm; }
-  void setRCM(const Eigen::Vector3d& rcm_) { rcm = rcm_; };
+  void setRCM(const Eigen::Vector3d& rcm_) {
+    rcm_available_ = true;
+    rcm = rcm_;
+  };
   [[nodiscard]] const Eigen::Vector4d& getGoal() const { return goal; }
   void setGoal(const Eigen::Vector4d& goal_) {
     goal_available_ = true;
