@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 from collections import namedtuple, deque
+from abc import ABC, abstractmethod
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -72,7 +73,7 @@ class DQN(nn.Module):
         return mu, q, v
 
 
-class RLContext:
+class RLContext(ABC):
     def __init__(self, state_dim, action_dim, discount_factor, batch_size, updates_per_step, max_force, output_directory, **kwargs):
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -87,6 +88,14 @@ class RLContext:
         self.action = None
         self.epoch = 0
 
+    @abstractmethod
+    def save(self): return
+
+    @abstractmethod
+    def load(self): return
+
+    @abstractmethod
+    def update(self, state): return
 
 class DQNContext(RLContext):
     def __init__(self, layer_size, replay_buffer_size, target_network_update_rate, **kwargs):
@@ -98,6 +107,24 @@ class DQNContext(RLContext):
         self.optimizer = torch.optim.Adam(self.dqn_policy.parameters())
         self.replay_buffer = ReplayBuffer(replay_buffer_size)
         self.target_network_update_rate = target_network_update_rate
+        self.save_file = os.path.join(self.output_dir, "dqn.pt")
+        self.ts_model = os.path.join(self.output_dir, "dqn_ts.pt")
+
+    def save(self):
+        torch.save({
+            "epoch": self.epoch,
+            "model_state_dict": self.dqn_policy.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict()
+        }, self.save_file)
+        # torch.jit.script(self.dqn_policy).save(self.ts_model)
+
+    def load(self):
+        if os.path.exists(self.save_file):
+            state_dict = torch.load(self.save_file)
+            self.epoch = state_dict["epoch"]
+            self.dqn_policy.load_state_dict(state_dict["model_state_dict"])
+            self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
+            self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
 
     def update(self, state):
         reward = self.reward_function(state)
