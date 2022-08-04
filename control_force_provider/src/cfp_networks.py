@@ -127,7 +127,6 @@ class DQNContext(RLContext):
         with torch.no_grad():
             self.action = self.dqn_policy(state.unsqueeze(0))[0].squeeze(0)
         self.dqn_policy.train()
-        print(self.action.tolist)
         return self.action.tolist()
 
 
