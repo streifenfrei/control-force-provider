@@ -9,7 +9,7 @@ rl_context = None
 
 
 def service_handle(request):
-    action = rl_context.update(request.state)
+    action = rl_context.update(request.state, request.goal)
     action.append(0)
     return UpdateNetworkResponse(action)
 

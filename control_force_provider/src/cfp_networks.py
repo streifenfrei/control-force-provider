@@ -3,6 +3,7 @@ import random
 import torch
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
+from torch.utils.tensorboard import SummaryWriter
 from collections import namedtuple, deque
 from abc import ABC, abstractmethod
 
@@ -82,11 +83,15 @@ class RLContext(ABC):
         self.updates_per_step = updates_per_step
         self.max_force = max_force
         self.output_dir = output_directory
-        self.log_file = os.path.join(output_directory, "cfp_rl.log")
+        self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"))
         self.reward_function = RewardFunction()
         self.last_state = None
         self.action = None
         self.epoch = 0
+        self.goal = None
+
+    def __del__(self):
+        self.summary_writer.flush()
 
     @abstractmethod
     def save(self): return
@@ -95,7 +100,8 @@ class RLContext(ABC):
     def load(self): return
 
     @abstractmethod
-    def update(self, state): return
+    def update(self, state, goal): return
+
 
 class DQNContext(RLContext):
     def __init__(self, layer_size, replay_buffer_size, target_network_update_rate, **kwargs):
@@ -126,9 +132,13 @@ class DQNContext(RLContext):
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
             self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
 
-    def update(self, state):
+    def update(self, state, goal):
         reward = self.reward_function(state)
+        self.summary_writer.add_scalar("reward/train", reward, self.epoch)
         state = torch.tensor(state)
+        if goal != self.goal:
+            self.summary_writer.add_text("episodes/train", f"New goal: {goal}", self.epoch)
+            self.goal = goal
         if self.last_state is not None:
             self.replay_buffer.push(self.last_state, self.action, state, reward)
         self.last_state = state
@@ -143,6 +153,7 @@ class DQNContext(RLContext):
                     v_target = self.dqn_target(state_batch)[2]
                 target = reward_batch + self.discount_factor * v_target
                 loss = nn.MSELoss()(q, target)
+                self.summary_writer.add_scalar("loss/train", loss, self.epoch)
                 self.optimizer.zero_grad()
                 loss.backward()
                 clip_grad_norm_(self.dqn_policy.parameters(), 1)

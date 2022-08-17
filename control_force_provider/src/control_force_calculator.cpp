@@ -1,6 +1,7 @@
 #include "control_force_provider/control_force_calculator.h"
 
 #include <boost/algorithm/clamp.hpp>
+#include <boost/array.hpp>
 #include <boost/chrono.hpp>
 
 #include "control_force_provider/utils.h"
@@ -146,16 +147,20 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacl
 
 Vector4d ReinforcementLearningAgent::getAction() {
   if (train) {
-    Vector4d obstacle_position;
-    obstacle->getPosition(obstacle_position);
-    torch::Tensor state_tensor = state_provider.createState(ee_position, rcm, obstacle_position, obstacle->getRCM());
-    auto state_tensor_accessor = state_tensor.accessor<double, 1>();
-    std::vector<double> state_vector;
-    for (size_t i = 0; i < state_provider.getStateDim(); i++) state_vector.push_back(state_tensor_accessor[i]);
-    control_force_provider_msgs::UpdateNetwork srv;
-    srv.request.state = state_vector;
-    if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/rl", "Failed to call training service.");
-    return Vector4d(srv.response.action.data());
+    if (training_service_client->exists()) {
+      Vector4d obstacle_position;
+      obstacle->getPosition(obstacle_position);
+      torch::Tensor state_tensor = state_provider.createState(ee_position, rcm, obstacle_position, obstacle->getRCM());
+      auto state_tensor_accessor = state_tensor.accessor<double, 1>();
+      std::vector<double> state_vector;
+      for (size_t i = 0; i < state_provider.getStateDim(); i++) state_vector.push_back(state_tensor_accessor[i]);
+      control_force_provider_msgs::UpdateNetwork srv;
+      srv.request.state = state_vector;
+      for (size_t i = 0; i < 4; i++) srv.request.goal[i] = goal[i];
+      if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/rl", "Failed to call training service.");
+      return Vector4d(srv.response.action.data());
+    } else
+      return Vector4d::Zero();
   } else {
     // TODO: extrapolate current state during inference
     // torch::Tensor state = getActionInference(...);

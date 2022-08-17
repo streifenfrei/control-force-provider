@@ -1,3 +1,4 @@
 float64[] state
+float64[4] goal
 ---
 float64[4] action
