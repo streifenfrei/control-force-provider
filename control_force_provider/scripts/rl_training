@@ -5,35 +5,38 @@ import yaml
 import signal
 from control_force_provider_msgs.srv import UpdateNetwork, UpdateNetworkResponse
 
+config = None
 rl_context = None
 
 
 def service_handle(request):
+    global config, rl_context
+    if rl_context is None:
+        config["state_dim"] = len(request.state)
+        config["action_dim"] = 3
+        import cfp_networks
+        rl_context = cfp_networks.context_mapping[config["type"]](**config, **config[config["type"]])
+        rl_context.load()
     action = rl_context.update(request.state, request.goal)
     action.append(0)
     return UpdateNetworkResponse(action)
 
 
 def signal_handle(sig, frame):
+    global rl_context
     if rl_context is not None:
         rl_context.save()
 
 
 def main():
-    global rl_context
+    global config, rl_context
     config = rospy.get_param("control_force_provider/config")
     with open(config, "r") as f:
         config = yaml.safe_load(f)
     if config["algorithm"] != "rl" or not config["rl"]["train"]:
         return
     config = config["rl"]
-    config["state_dim"] = 9 + 3 * config["obstacle_history_length"]
-    config["action_dim"] = 3
-
-    import cfp_networks
     rospy.init_node("rl_training", anonymous=True)
-    rl_context = cfp_networks.context_mapping[config["type"]](**config, **config[config["type"]])
-    rl_context.load()
     signal.signal(signal.SIGINT, signal_handle)
     rospy.Service("update_network", UpdateNetwork, service_handle)
     rospy.spin()

@@ -3,6 +3,7 @@
 #include <boost/algorithm/clamp.hpp>
 #include <boost/array.hpp>
 #include <boost/chrono.hpp>
+#include <string>
 
 #include "control_force_provider/utils.h"
 
@@ -19,9 +20,7 @@ PotentialFieldMethod::PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle
       min_rcm_distance_(utils::getConfigValue<double>(config, "min_rcm_distance")[0]) {}
 
 void PotentialFieldMethod::getForceImpl(Vector4d& force) {
-  Vector4d obstacle_position;
-  obstacle->getPosition(obstacle_position);
-  Vector3d obstacle_position3d = obstacle_position.head(3);
+  Vector3d obstacle_position3d = ob_position.head(3);
   const Vector3d& goal3d = goal.head(3);
   const Vector3d& ee_position3d = ee_position.head(3);
   // attractive vector
@@ -39,7 +38,7 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
   //  tool2:                                                    l2 = a2 + s*b2
   const Vector3d& a1 = rcm;
   Vector3d b1 = ee_position3d - a1;
-  const Vector3d& a2 = obstacle->getRCM();
+  const Vector3d& a2 = ob_rcm;
   Vector3d b2 = obstacle_position3d - a2;
   //  general vector between l1 and l2:                         v = a2 - a1 + sb2 - t*b1 = a' + s*b2 - t*b1
   Vector3d a_diff = a2 - a1;
@@ -99,35 +98,60 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
   force = {force3d[0], force3d[1], force3d[2], 0};
 }
 
-StateProvider::StateProvider(int obstacle_history_length) : obstacle_history_length_(obstacle_history_length), state_dim_(9 + 3 * obstacle_history_length) {}
-
-void StateProvider::updateObstacleHistory(const Vector4d& obstacle_position) {
-  do obstacle_history_.push_back(obstacle_position);
-  while (obstacle_history_.size() <= obstacle_history_length_);
-  obstacle_history_.pop_front();
+StateProvider::StateProvider(const Vector4d& ee_position, const Vector3d& robot_rcm, const Vector4d& obstacle_position, const Vector3d& obstacle_rcm,
+                             const Vector4d& goal, const std::string& state_pattern) {
+  for (auto& str : utils::regex_findall(pattern_regex, state_pattern)) {
+    std::string id = str.substr(0, 3);
+    std::string args = str.substr(4, str.length() - 5);
+    if (id == "ree") {
+      state_populators_.emplace_back(ee_position.data(), 3);
+    } else if (id == "rpp") {
+      state_populators_.emplace_back(robot_rcm.data(), 3);
+    } else if (id == "oee") {
+      state_populators_.emplace_back(obstacle_position.data(), 3);
+    } else if (id == "opp") {
+      state_populators_.emplace_back(obstacle_rcm.data(), 3);
+    } else if (id == "gol") {
+      state_populators_.emplace_back(goal.data(), 3);
+    } else {
+      ROS_WARN_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Unknown id in state pattern: " << id);
+      continue;
+    }
+    // parse arguments
+    for (auto& arg : utils::regex_findall(arg_regex, args)) {
+      std::string arg_id = arg.substr(0, 1);
+      unsigned int value = std::stoi(arg.substr(1, arg.length() - 1));
+      if (arg_id == "h")
+        state_populators_.back().history_length_ = value;
+      else if (arg_id == "s")
+        state_populators_.back().history_stride_ = value;
+      else
+        ROS_WARN_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Unknown argument " << arg << " for id " << id << " in state pattern");
+    }
+  }
+  for (auto& pop : state_populators_) state_dim_ += pop.getDim();
 }
 
-torch::Tensor StateProvider::createState(const Vector4d& ee_position, /*const Vector3d& ee_velocity,*/ const Vector3d& robot_rcm,
-                                         const Vector4d& obstacle_position, const Vector3d& obstacle_rcm) {
-  updateObstacleHistory(obstacle_position);
+void StateProvider::StatePopulator::populate(torch::Tensor& state, int& index) {
+  if (stride_index_ == 0) {
+    VectorXd eigen_vector(length_);
+    for (size_t i = 0; i < length_; i++) eigen_vector[i] = vector_[i];
+    do history_.push_back(eigen_vector);
+    while (history_.size() <= history_length_);
+    history_.pop_front();
+    stride_index_ = history_stride_;
+  } else
+    stride_index_ -= 1;
+  auto state_accessor = state.accessor<double, 1>();
+  for (auto& vec : history_)
+    for (size_t i = 0; i < length_; i++) state_accessor[index++] = vec[i];
+}
+
+torch::Tensor StateProvider::createState() {
   auto options = torch::TensorOptions().dtype(torch::kFloat64);
   torch::Tensor state = torch::empty(state_dim_, options);
-  auto state_accessor = state.accessor<double, 1>();
-  unsigned int index = 0;
-  state_accessor[index++] = robot_rcm[0];
-  state_accessor[index++] = robot_rcm[1];
-  state_accessor[index++] = robot_rcm[2];
-  state_accessor[index++] = ee_position[0];
-  state_accessor[index++] = ee_position[1];
-  state_accessor[index++] = ee_position[2];
-  state_accessor[index++] = obstacle_rcm[0];
-  state_accessor[index++] = obstacle_rcm[1];
-  state_accessor[index++] = obstacle_rcm[2];
-  for (auto& obstacle : obstacle_history_) {
-    state_accessor[index++] = obstacle[0];
-    state_accessor[index++] = obstacle[1];
-    state_accessor[index++] = obstacle[2];
-  }
+  int index = 0;
+  for (auto& pop : state_populators_) pop.populate(state, index);
   return state;
 }
 
@@ -136,8 +160,9 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacl
       interval_duration_(ros::Duration(utils::getConfigValue<double>(config, "interval_duration")[0] * 10e-4)),
       train(utils::getConfigValue<bool>(config, "train")[0]),
       output_dir(utils::getConfigValue<std::string>(config, "output_directory")[0]),
-      state_provider(utils::getConfigValue<int>(config, "obstacle_history_length")[0]),
       last_calculation_(ros::Time::now()) {
+  state_provider =
+      boost::make_shared<StateProvider>(ee_position, rcm, ob_position, ob_rcm, goal, utils::getConfigValue<std::string>(config, "state_pattern")[0]);
   calculation_future_ = calculation_promise_.get_future();
   calculation_promise_.set_value(Vector4d::Zero());
   if (train) {
@@ -148,16 +173,14 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(boost::shared_ptr<Obstacl
 Vector4d ReinforcementLearningAgent::getAction() {
   if (train) {
     if (training_service_client->exists()) {
-      Vector4d obstacle_position;
-      obstacle->getPosition(obstacle_position);
-      torch::Tensor state_tensor = state_provider.createState(ee_position, rcm, obstacle_position, obstacle->getRCM());
+      torch::Tensor state_tensor = state_provider->createState();
       auto state_tensor_accessor = state_tensor.accessor<double, 1>();
       std::vector<double> state_vector;
-      for (size_t i = 0; i < state_provider.getStateDim(); i++) state_vector.push_back(state_tensor_accessor[i]);
+      for (size_t i = 0; i < state_provider->getStateDim(); i++) state_vector.push_back(state_tensor_accessor[i]);
       control_force_provider_msgs::UpdateNetwork srv;
       srv.request.state = state_vector;
       for (size_t i = 0; i < 4; i++) srv.request.goal[i] = goal[i];
-      if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/rl", "Failed to call training service.");
+      if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to call training service.");
       return Vector4d(srv.response.action.data());
     } else
       return Vector4d::Zero();

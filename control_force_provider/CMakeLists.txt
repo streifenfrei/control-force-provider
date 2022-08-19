@@ -34,7 +34,8 @@ add_library(
         src/control_force_provider.cpp
         src/control_force_calculator.cpp
         src/obstacle.cpp
-        src/visualizer.cpp)
+        src/visualizer.cpp
+        src/utils.cpp)
 
 target_link_libraries(
         ${PROJECT_NAME} PUBLIC

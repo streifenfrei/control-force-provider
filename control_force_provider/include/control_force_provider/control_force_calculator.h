@@ -24,6 +24,8 @@ class ControlForceCalculator {
   Eigen::Vector3d rcm;
   Eigen::Vector4d goal;
   boost::shared_ptr<Obstacle> obstacle;
+  Eigen::Vector4d ob_position;
+  Eigen::Vector3d ob_rcm;
   friend class Visualizer;
 
   virtual void getForceImpl(Eigen::Vector4d& force) = 0;
@@ -34,6 +36,8 @@ class ControlForceCalculator {
     if (!goal_available_) setGoal(ee_position);
     if (rcm_available_) {
       ee_position = ee_position_;
+      obstacle->getPosition(ob_position);
+      ob_rcm = obstacle->getRCM();
       getForceImpl(force);
     }
   }
@@ -72,17 +76,31 @@ class PotentialFieldMethod : public ControlForceCalculator {
 
 class StateProvider {
  private:
-  const int obstacle_history_length_;
-  const int state_dim_;
-  std::deque<Eigen::Vector4d> obstacle_history_;
-  void updateObstacleHistory(const Eigen::Vector4d& obstacle_position);
+  int state_dim_ = 0;
+  static inline const std::string pattern_regex = "[[:alpha:]]{3}\\(([[:alpha:]][[:digit:]]+)*\\)";
+  static inline const std::string arg_regex = "[[:alpha:]][[:digit:]]+";
+  class StatePopulator {
+   private:
+    const double* vector_;
+    const int length_;
+    std::deque<Eigen::VectorXd> history_;
+    unsigned int stride_index_ = 0;
+
+   public:
+    unsigned int history_length_ = 1;
+    unsigned int history_stride_ = 0;
+    StatePopulator(const double* vector, int length = 0) : vector_(vector), length_(length){};
+    void populate(torch::Tensor& state, int& index);
+    int getDim() const { return length_ * history_length_; };
+  };
+  std::vector<StatePopulator> state_populators_;
 
  public:
-  explicit StateProvider(int obstacle_history_length);
-  torch::Tensor createState(const Eigen::Vector4d& ee_position, /*const Eigen::Vector3d& ee_velocity,*/ const Eigen::Vector3d& robot_rcm,
-                            const Eigen::Vector4d& obstacle_position, const Eigen::Vector3d& obstacle_rcm);
+  StateProvider(const Eigen::Vector4d& ee_position, const Eigen::Vector3d& robot_rcm, const Eigen::Vector4d& obstacle_position,
+                const Eigen::Vector3d& obstacle_rcm, const Eigen::Vector4d& goal, const std::string& state_pattern);
+  torch::Tensor createState();
   ~StateProvider() = default;
-  int getStateDim() { return state_dim_; };
+  int getStateDim() const { return state_dim_; };
 };
 
 class ReinforcementLearningAgent : public ControlForceCalculator {
@@ -99,7 +117,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
 
  protected:
   const std::string output_dir;
-  StateProvider state_provider;
+  boost::shared_ptr<StateProvider> state_provider;
   boost::shared_ptr<ros::ServiceClient> training_service_client;
 
   virtual torch::Tensor getActionInference(torch::Tensor& state) = 0;
