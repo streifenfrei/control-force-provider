@@ -2,7 +2,6 @@
 
 #include <eigen_conversions/eigen_msg.h>
 
-#include <fstream>
 #include <iostream>
 
 #include "control_force_provider/utils.h"
