@@ -10,7 +10,7 @@
 using namespace Eigen;
 using namespace control_force_provider::utils;
 namespace control_force_provider::backend {
-SimulatedObstacle::SimulatedObstacle(const ryml::NodeRef& config) : speed_(getConfigValue<double>(config, "speed")[0]) {
+WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string& id) : Obstacle(id), speed_(getConfigValue<double>(config, "speed")[0]) {
   std::vector<double> waypoints_raw = getConfigValue<double>(config, "waypoints");
   unsigned int waypoints_raw_length = waypoints_raw.size() - (waypoints_raw.size() % 3);
   for (size_t i = 0; i < waypoints_raw_length; i += 3) {
@@ -32,7 +32,7 @@ SimulatedObstacle::SimulatedObstacle(const ryml::NodeRef& config) : speed_(getCo
   rcm_ = {rcm_raw[0], rcm_raw[1], rcm_raw[2]};
 }
 
-void SimulatedObstacle::getPosition(Vector4d& position) {
+void WaypointsObstacle::getPosition(Vector4d& position) {
   double time = fmod(ros::Time::now().toSec(), total_duration_);
   unsigned int segment;
   double duration_sum = 0;

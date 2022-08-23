@@ -3,10 +3,10 @@
 #include <geometry_msgs/Point.h>
 #include <geometry_msgs/PointStamped.h>
 #include <ros/ros.h>
+#include <yaml-cpp/yaml.h>
 
 #include <Eigen/Dense>
 #include <boost/shared_ptr.hpp>
-#include <ryml.hpp>
 
 #include "control_force_calculator.h"
 #include "visualizer.h"
@@ -26,7 +26,7 @@ class ROSNode {
 class ControlForceProvider : ROSNode {
  private:
   boost::shared_ptr<ControlForceCalculator> control_force_calculator_;
-  boost::shared_ptr<ryml::Tree> config_;
+  boost::shared_ptr<YAML::Node> config_;
   ros::NodeHandle node_handle_{};
   ros::AsyncSpinner spinner_{1};
   ros::Subscriber rcm_subscriber_;

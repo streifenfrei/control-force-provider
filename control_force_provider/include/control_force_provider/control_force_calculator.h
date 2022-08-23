@@ -23,24 +23,17 @@ class ControlForceCalculator {
   Eigen::Vector4d ee_position;
   Eigen::Vector3d rcm;
   Eigen::Vector4d goal;
-  boost::shared_ptr<Obstacle> obstacle;
-  Eigen::Vector4d ob_position;
-  Eigen::Vector3d ob_rcm;
+  std::vector<boost::shared_ptr<Obstacle>> obstacles;
+  std::vector<Eigen::Vector4d> ob_positions;
+  std::vector<Eigen::Vector3d> ob_rcms;
   friend class Visualizer;
+  friend class StateProvider;
 
   virtual void getForceImpl(Eigen::Vector4d& force) = 0;
 
  public:
-  explicit ControlForceCalculator(boost::shared_ptr<Obstacle>& obstacle) : obstacle(obstacle) {}
-  void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position_) {
-    if (!goal_available_) setGoal(ee_position);
-    if (rcm_available_) {
-      ee_position = ee_position_;
-      obstacle->getPosition(ob_position);
-      ob_rcm = obstacle->getRCM();
-      getForceImpl(force);
-    }
-  }
+  explicit ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_);
+  void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position_);
   virtual ~ControlForceCalculator() = default;
   [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm; }
   void setRCM(const Eigen::Vector3d& rcm_) {
@@ -62,45 +55,46 @@ class PotentialFieldMethod : public ControlForceCalculator {
   const double repulsion_distance_;
   const double z_translation_strength_;
   const double min_rcm_distance_;
-  Eigen::Vector3d point_on_l1_;
-  Eigen::Vector3d point_on_l2_;
+  std::vector<Eigen::Vector3d> points_on_l1_;
+  std::vector<Eigen::Vector3d> points_on_l2_;
   friend class Visualizer;
 
  protected:
   void getForceImpl(Eigen::Vector4d& force) override;
 
  public:
-  PotentialFieldMethod(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config);
+  PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config);
   ~PotentialFieldMethod() override = default;
 };
 
 class StateProvider {
  private:
-  int state_dim_ = 0;
+  unsigned int state_dim_ = 0;
   static inline const std::string pattern_regex = "[[:alpha:]]{3}\\(([[:alpha:]][[:digit:]]+)*\\)";
   static inline const std::string arg_regex = "[[:alpha:]][[:digit:]]+";
   class StatePopulator {
    private:
-    const double* vector_;
-    const int length_;
-    std::deque<Eigen::VectorXd> history_;
+    std::vector<std::deque<Eigen::VectorXd>> histories_;
     unsigned int stride_index_ = 0;
 
    public:
+    std::vector<const double*> vectors_;
+    int length_ = 0;
     unsigned int history_length_ = 1;
     unsigned int history_stride_ = 0;
-    StatePopulator(const double* vector, int length = 0) : vector_(vector), length_(length){};
+    StatePopulator() = default;
+    ;
     void populate(torch::Tensor& state, int& index);
-    int getDim() const { return length_ * history_length_; };
+    [[nodiscard]] unsigned int getDim() const { return length_ * vectors_.size() * history_length_; };
   };
   std::vector<StatePopulator> state_populators_;
+  static StatePopulator createPopulatorFromString(const ControlForceCalculator& cfc, const std::string& str);
 
  public:
-  StateProvider(const Eigen::Vector4d& ee_position, const Eigen::Vector3d& robot_rcm, const Eigen::Vector4d& obstacle_position,
-                const Eigen::Vector3d& obstacle_rcm, const Eigen::Vector4d& goal, const std::string& state_pattern);
+  StateProvider(const ControlForceCalculator& cfc, const std::string& state_pattern);
   torch::Tensor createState();
   ~StateProvider() = default;
-  int getStateDim() const { return state_dim_; };
+  [[nodiscard]] unsigned int getStateDim() const { return state_dim_; };
 };
 
 class ReinforcementLearningAgent : public ControlForceCalculator {
@@ -124,7 +118,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   void getForceImpl(Eigen::Vector4d& force) override;
 
  public:
-  ReinforcementLearningAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config, ros::NodeHandle& node_handle);
+  ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle);
   ~ReinforcementLearningAgent() override = default;
 };
 
@@ -133,6 +127,6 @@ class DeepQNetworkAgent : public ReinforcementLearningAgent {
   torch::Tensor getActionInference(torch::Tensor& state) override;
 
  public:
-  DeepQNetworkAgent(boost::shared_ptr<Obstacle>& obstacle, const ryml::NodeRef& config, ros::NodeHandle& node_handle);
+  DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle);
 };
 }  // namespace control_force_provider::backend

@@ -13,7 +13,7 @@ find_package(
         roscpp)
 
 find_package(Eigen3 REQUIRED)
-find_package(ryml REQUIRED)
+find_package(yaml-cpp REQUIRED)
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS ${TORCH_CXX_FLAGS})
 
@@ -40,7 +40,7 @@ add_library(
 target_link_libraries(
         ${PROJECT_NAME} PUBLIC
         Eigen3::Eigen
-        ryml::ryml
+        yaml-cpp
         ${TORCH_LIBRARIES}
         ${catkin_LIBRARIES})
 

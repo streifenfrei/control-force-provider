@@ -13,45 +13,44 @@ namespace control_force_provider {
 void ControlForceProvider::loadConfig() {
   std::string config_file;
   if (!node_handle_.getParam("control_force_provider/config", config_file))
-    throw ConfigError("Please provide a config file as ROS parameter: control_force_provider/config");
-  std::ifstream stream(config_file);
-  std::stringstream buffer;
-  buffer << stream.rdbuf();
-  std::string content = buffer.str();
-  config_ = boost::make_shared<ryml::Tree>(ryml::parse_in_arena(to_csubstr(content)));
+    ROS_ERROR_STREAM_NAMED("control_force_provider", "Please provide a config file as ROS parameter: control_force_provider/config");
+  config_ = boost::make_shared<YAML::Node>(YAML::LoadFile(config_file));
 }
 
 ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider") {
   loadConfig();
-  ryml::NodeRef config_root_node = config_->rootref();
-  std::string obstacle_type = getConfigValue<std::string>(config_root_node, "obstacle_type")[0];
-  boost::shared_ptr<Obstacle> obstacle;
-  // load obstacle
-  if (obstacle_type == "simulated") {
-    ryml::NodeRef config_node = getConfigValue<ryml::NodeRef>(config_root_node, "simulated_obstacle")[0];
-    obstacle = boost::static_pointer_cast<Obstacle>(boost::make_shared<SimulatedObstacle>(config_node));
-  } else
-    throw ConfigError("Unknown obstacle type '" + obstacle_type + "'");
+  YAML::Node obstacle_configs = getConfigValue<YAML::Node>(*config_, "obstacles")[0];
+  std::vector<boost::shared_ptr<Obstacle>> obstacles;
+  // load obstacles
+  for (YAML::const_iterator it = obstacle_configs.begin(); it != obstacle_configs.end(); it++) {
+    std::string ob_id = it->first.as<std::string>();
+    const YAML::Node& ob_config = it->second;
+    std::string ob_type = getConfigValue<std::string>(ob_config, "type")[0];
+    if (ob_type == "waypoints") {
+      obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, ob_id)));
+    } else
+      throw ConfigError("Unknown obstacle type '" + ob_type + "'");
+  }
   // load calculator
-  std::string calculator_type = getConfigValue<std::string>(config_root_node, "algorithm")[0];
+  std::string calculator_type = getConfigValue<std::string>(*config_, "algorithm")[0];
   if (calculator_type == "pfm") {
-    ryml::NodeRef config_node = getConfigValue<ryml::NodeRef>(config_root_node, "pfm")[0];
-    control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<PotentialFieldMethod>(obstacle, config_node));
+    YAML::Node config_node = getConfigValue<YAML::Node>(*config_, "pfm")[0];
+    control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<PotentialFieldMethod>(obstacles, config_node));
   } else if (calculator_type == "rl") {
-    ryml::NodeRef config_node = getConfigValue<ryml::NodeRef>(config_root_node, "rl")[0];
+    YAML::Node config_node = getConfigValue<YAML::Node>(*config_, "rl")[0];
     std::string rl_type = getConfigValue<std::string>(config_node, "type")[0];
     if (rl_type == "dqn") {
       control_force_calculator_ =
-          boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<DeepQNetworkAgent>(obstacle, config_node, node_handle_));
+          boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<DeepQNetworkAgent>(obstacles, config_node, node_handle_));
     } else
       throw ConfigError("Unknown RL type '" + rl_type + "'");
   } else
     throw ConfigError("Unknown calculator type '" + calculator_type + "'");
   // load visualizer
-  if (config_root_node.has_child("visualize") && getConfigValue<bool>(config_root_node, "visualize")[0]) {
+  if ((*config_)["visualize"].IsDefined() && getConfigValue<bool>(*config_, "visualize")[0]) {
     visualizer_ = boost::make_shared<Visualizer>(node_handle_, control_force_calculator_);
   }
-  rcm_subscriber_ = node_handle_.subscribe(getConfigValue<std::string>(config_root_node, "rcm_topic")[0], 100, &ControlForceProvider::rcmCallback, this);
+  rcm_subscriber_ = node_handle_.subscribe(getConfigValue<std::string>(*config_, "rcm_topic")[0], 100, &ControlForceProvider::rcmCallback, this);
   goal_subscriber_ = node_handle_.subscribe("control_force_provider/goal", 100, &ControlForceProvider::goalCallback, this);
   spinner_.start();
 }

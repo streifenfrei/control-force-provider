@@ -13,12 +13,13 @@ Visualizer::Visualizer(ros::NodeHandle &node_handle, boost::shared_ptr<ControlFo
 
 void Visualizer::callback(const ros::TimerEvent &event) {
   visual_tools_.deleteAllMarkers();
-  // obstacle
-  Eigen::Vector4d obstacle_position;
-  control_force_calculator_->obstacle->getPosition(obstacle_position);
-  Eigen::Vector3d obstacle_rcm = control_force_calculator_->obstacle->getRCM();
-  visual_tools_.publishSphere(obstacle_rcm, rviz_visual_tools::BROWN);
-  visual_tools_.publishLine(obstacle_rcm, obstacle_position.head(3), rviz_visual_tools::BROWN);
+  // obstacles
+  for (size_t i = 0; i < control_force_calculator_->obstacles.size(); i++) {
+    Eigen::Vector3d obstacle_rcm = control_force_calculator_->ob_rcms[i];
+    Eigen::Vector4d obstacle_pos = control_force_calculator_->ob_positions[i];
+    visual_tools_.publishSphere(obstacle_rcm, rviz_visual_tools::BROWN);
+    visual_tools_.publishLine(obstacle_rcm, obstacle_pos.head(3), rviz_visual_tools::BROWN);
+  }
   // control_force_calculator
   const Eigen::Vector4d& ee_position = control_force_calculator_->ee_position;
   const Eigen::Vector3d& robot_rcm = control_force_calculator_->rcm;
@@ -26,8 +27,10 @@ void Visualizer::callback(const ros::TimerEvent &event) {
   visual_tools_.publishSphere(control_force_calculator_->goal.head(3), rviz_visual_tools::BLUE);
   boost::shared_ptr<PotentialFieldMethod> pfm = boost::dynamic_pointer_cast<PotentialFieldMethod>(control_force_calculator_);
   if (pfm) {
-    double distance = (pfm->point_on_l2_ - pfm->point_on_l1_).norm();
-    if (distance < pfm->repulsion_distance_) visual_tools_.publishLine(pfm->point_on_l1_, pfm->point_on_l2_, rviz_visual_tools::CYAN);
+    for (size_t i = 0; i < control_force_calculator_->obstacles.size(); i++) {
+      double distance = (pfm->points_on_l2_[i] - pfm->points_on_l1_[i]).norm();
+      if (distance < pfm->repulsion_distance_) visual_tools_.publishLine(pfm->points_on_l1_[i], pfm->points_on_l2_[i], rviz_visual_tools::CYAN);
+    }
   }
   visual_tools_.trigger();
 }

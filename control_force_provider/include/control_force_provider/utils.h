@@ -1,6 +1,6 @@
 #pragma once
 
-#include <ryml.hpp>
+#include <yaml-cpp/yaml.h>
 
 namespace control_force_provider {
 namespace exceptions {
@@ -21,34 +21,30 @@ class PythonError : Error {
 namespace utils {
 using namespace exceptions;
 
-// == ryml::to_csubstr but static (hacky workaround for gzserver error)
-static ryml::csubstr to_csubstr(std::string const &s) {
-  const char *data = !s.empty() ? &s[0] : nullptr;
-  return ryml::csubstr(data, s.size());
-}
-
-static std::string until_newline(std::string const &s) {
-  std::string::size_type pos = s.find('\n');
-  if (pos != std::string::npos)
-    return s.substr(0, pos);
-  else
-    return s;
-}
-
 template <typename T>
-std::vector<T> getConfigValue(const ryml::NodeRef &config, const std::string &key);
-template <>
-std::vector<ryml::NodeRef> getConfigValue(const ryml::NodeRef &config, const std::string &key);
-template <>
-std::vector<std::string> getConfigValue(const ryml::NodeRef &config, const std::string &key);
-template <>
-std::vector<int> getConfigValue(const ryml::NodeRef &config, const std::string &key);
-template <>
-std::vector<double> getConfigValue(const ryml::NodeRef &config, const std::string &key);
-template <>
-std::vector<bool> getConfigValue(const ryml::NodeRef &config, const std::string &key);
+std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) {
+  YAML::Node node = config[key];
+  if (!node.IsDefined()) {
+    throw ConfigError("Missing key: " + key);
+  }
+  try {
+    std::vector<T> value;
+    switch (node.Type()) {
+      case YAML::NodeType::Sequence:
+        for (auto &&i : node) {
+          value.push_back(i.as<T>());
+        }
+        break;
+      default:
+        value.push_back(node.as<T>());
+    }
+    return value;
+  } catch (const YAML::BadConversion &exception) {
+    throw ConfigError("Bad data type for key '" + key + "'. Expected: " + typeid(T).name());
+  }
+}
 
-std::vector<std::string> regex_findall(std::string regex, std::string str);
+std::vector<std::string> regex_findall(const std::string &regex, const std::string &str);
 
 }  // namespace utils
 }  // namespace control_force_provider
