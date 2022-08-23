@@ -23,6 +23,8 @@ class ControlForceCalculator {
   Eigen::Vector4d ee_position;
   Eigen::Vector3d rcm;
   Eigen::Vector4d goal;
+  ros::Time start_time;
+  double elapsed_time;
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
   std::vector<Eigen::Vector4d> ob_positions;
   std::vector<Eigen::Vector3d> ob_rcms;
@@ -44,6 +46,7 @@ class ControlForceCalculator {
   void setGoal(const Eigen::Vector4d& goal_) {
     goal_available_ = true;
     goal = goal_;
+    start_time = ros::Time::now();
   };
 };
 

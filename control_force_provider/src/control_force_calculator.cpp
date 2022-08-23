@@ -22,6 +22,7 @@ void ControlForceCalculator::getForce(Eigen::Vector4d& force, const Eigen::Vecto
   if (!goal_available_) setGoal(ee_position);
   if (rcm_available_) {
     ee_position = ee_position_;
+    elapsed_time = (ros::Time::now() - start_time).toSec();
     for (size_t i = 0; i < obstacles.size(); i++) {
       obstacles[i]->getPosition(ob_positions[i]);
       ob_rcms[i] = obstacles[i]->getRCM();
@@ -146,6 +147,9 @@ StateProvider::StatePopulator StateProvider::createPopulatorFromString(const Con
     for (auto& rcm : cfc.ob_rcms) populator.vectors_.push_back(rcm.data());
   } else if (id == "gol") {
     populator.vectors_.push_back(cfc.goal.data());
+  } else if (id == "tim") {
+    populator.length_ = 1;
+    populator.vectors_.push_back(&cfc.elapsed_time);
   } else {
     ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Unknown id in state pattern: " << id);
   }
