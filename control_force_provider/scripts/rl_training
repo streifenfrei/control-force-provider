@@ -4,40 +4,41 @@ import rospy
 import yaml
 import signal
 from control_force_provider_msgs.srv import UpdateNetwork, UpdateNetworkResponse
+from functools import reduce
 
-config = None
 rl_context = None
 
 
 def service_handle(request):
-    global config, rl_context
-    if rl_context is None:
-        config["state_dim"] = len(request.state)
-        config["action_dim"] = 3
-        import cfp_networks
-        rl_context = cfp_networks.context_mapping[config["type"]](**config, **config[config["type"]])
-        rl_context.load()
     action = rl_context.update(request.state, request.goal)
     action.append(0)
     return UpdateNetworkResponse(action)
 
 
 def signal_handle(sig, frame):
-    global rl_context
     if rl_context is not None:
         rl_context.save()
 
 
 def main():
-    global config, rl_context
+    global rl_context
     config = rospy.get_param("control_force_provider/config")
     with open(config, "r") as f:
         config = yaml.safe_load(f)
     if config["algorithm"] != "rl" or not config["rl"]["train"]:
         return
+    num_obstacles = len(config["obstacles"])
     config = config["rl"]
+    import cfp_networks
+    state_structure = cfp_networks.parse_state_pattern(config["state_pattern"], num_obstacles)
+    config["state_dim"] = reduce(lambda x, y: x + y, (x[2] for x in state_structure))
+    config["action_dim"] = 3
+    reward_function = cfp_networks.RewardFunction(state_structure)
+    rl_context = cfp_networks.context_mapping[config["type"]](reward_function=reward_function, **config, **config[config["type"]])
+    rl_context.load()
     rospy.init_node("rl_training", anonymous=True)
     signal.signal(signal.SIGINT, signal_handle)
+
     rospy.Service("update_network", UpdateNetwork, service_handle)
     rospy.spin()
 

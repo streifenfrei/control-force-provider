@@ -1,4 +1,5 @@
 import os.path
+import re
 import random
 import torch
 import torch.nn as nn
@@ -11,8 +12,34 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
+pattern_regex = "([a-z]{3})\\((([a-z][0-9]+)*)\\)"
+arg_regex = "[a-z][0-9]+"
+
+
+def parse_state_pattern(state_pattern, num_obstacles):
+    ids = re.findall(pattern_regex, state_pattern)
+    structure = []
+    index = 0
+    for id in ids:
+        args = id[1]
+        id = id[0]
+        history_length = 1
+        for arg in re.findall(arg_regex, args):
+            if arg[0] == "h":
+                history_length = int(arg[1:])
+        length = 1 if id == "tim" else 3
+        length *= num_obstacles if id == "oee" or id == "opp" else 1
+        length *= history_length
+        structure.append((id, index, length))
+        index += length
+    return structure
+
 
 class RewardFunction:
+
+    def __init__(self, state_structure):
+        self.state_structure = state_structure
+
     def __call__(self, state):
         return torch.tensor([0])
 
@@ -23,7 +50,13 @@ class ReplayBuffer:
         self.buffer = deque([], maxlen=capacity)
 
     def push(self, *args):
-        self.buffer.append(Transition(*args))
+        valid = True
+        for arg in args:
+            if torch.max(torch.isnan(arg)) or torch.max(torch.isinf(arg)):
+                valid = False
+                break
+        if valid:
+            self.buffer.append(Transition(*args))
 
     def sample(self, batch_size):
         return random.sample(self.buffer, batch_size)
@@ -75,7 +108,7 @@ class DQN(nn.Module):
 
 
 class RLContext(ABC):
-    def __init__(self, state_dim, action_dim, discount_factor, batch_size, updates_per_step, max_force, output_directory, **kwargs):
+    def __init__(self, state_dim, action_dim, reward_function, discount_factor, batch_size, updates_per_step, max_force, output_directory, **kwargs):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.discount_factor = discount_factor
@@ -84,7 +117,7 @@ class RLContext(ABC):
         self.max_force = max_force
         self.output_dir = output_directory
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"))
-        self.reward_function = RewardFunction()
+        self.reward_function = reward_function
         self.last_state = None
         self.action = None
         self.epoch = 0
