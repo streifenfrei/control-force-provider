@@ -7,38 +7,58 @@ from torch.nn.utils import clip_grad_norm_
 from torch.utils.tensorboard import SummaryWriter
 from collections import namedtuple, deque
 from abc import ABC, abstractmethod
+from enum import Enum
+from functools import reduce
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
-
+action_dim = 3
 pattern_regex = "([a-z]{3})\\((([a-z][0-9]+)*)\\)"
 arg_regex = "[a-z][0-9]+"
 
 
-def parse_state_pattern(state_pattern, num_obstacles):
-    ids = re.findall(pattern_regex, state_pattern)
-    structure = []
-    index = 0
-    for id in ids:
-        args = id[1]
-        id = id[0]
-        history_length = 1
-        for arg in re.findall(arg_regex, args):
-            if arg[0] == "h":
-                history_length = int(arg[1:])
-        length = 1 if id == "tim" else 3
-        length *= num_obstacles if id == "oee" or id == "opp" else 1
-        length *= history_length
-        structure.append((id, index, length))
-        index += length
-    return structure
+class StateDecoder:
+    class Value(str, Enum):
+        robot_position = "ree"
+        robot_rcm = "rpp"
+        obstacle_position = "oee"
+        obstacle_rcm = "opp"
+        goal = "gol"
+        time = "tim"
+
+    def __init__(self, state_pattern, num_obstacles):
+        self.mapping = {}
+        ids = re.findall(pattern_regex, state_pattern)
+        structure = []
+        index = 0
+        for id in ids:
+            args = id[1]
+            id = id[0]
+            history_length = 1
+            for arg in re.findall(arg_regex, args):
+                if arg[0] == "h":
+                    history_length = int(arg[1:])
+            length = 1 if id == StateDecoder.Value.time else 3
+            length *= num_obstacles if id == StateDecoder.Value.obstacle_position or id == StateDecoder.Value.obstacle_rcm else 1
+            length *= history_length
+            self.mapping[id] = (index, length)
+            structure.append((id, index, length))
+            index += length
+
+    def get_state_dim(self):
+        return reduce(lambda x, y: x + y, (x[1] for x in self.mapping.values()))
+
+    def get_value(self, state, type):
+        if type in self.mapping.keys():
+            index, length = self.mapping[type]
+            return state[index:index + length]
 
 
 class RewardFunction:
 
-    def __init__(self, state_structure):
-        self.state_structure = state_structure
+    def __init__(self, state_decoder):
+        self.state_decoder = state_decoder
 
     def __call__(self, state):
         return torch.tensor([0])
@@ -108,8 +128,9 @@ class DQN(nn.Module):
 
 
 class RLContext(ABC):
-    def __init__(self, state_dim, action_dim, reward_function, discount_factor, batch_size, updates_per_step, max_force, output_directory, **kwargs):
-        self.state_dim = state_dim
+    def __init__(self, state_decoder, discount_factor, batch_size, updates_per_step, max_force, output_directory, **kwargs):
+        self.state_decoder = state_decoder
+        self.state_dim = state_decoder.get_state_dim()
         self.action_dim = action_dim
         self.discount_factor = discount_factor
         self.batch_size = batch_size
@@ -117,7 +138,7 @@ class RLContext(ABC):
         self.max_force = max_force
         self.output_dir = output_directory
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"))
-        self.reward_function = reward_function
+        self.reward_function = RewardFunction(state_decoder)
         self.last_state = None
         self.action = None
         self.epoch = 0
@@ -133,7 +154,7 @@ class RLContext(ABC):
     def load(self): return
 
     @abstractmethod
-    def update(self, state, goal): return
+    def update(self, state): return
 
 
 class DQNContext(RLContext):
@@ -165,7 +186,8 @@ class DQNContext(RLContext):
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
             self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
 
-    def update(self, state, goal):
+    def update(self, state):
+        goal = self.state_decoder.get_value(state, StateDecoder.Value.goal)
         reward = self.reward_function(state)
         self.summary_writer.add_scalar("reward/train", reward, self.epoch)
         state = torch.tensor(state)

@@ -10,7 +10,7 @@ rl_context = None
 
 
 def service_handle(request):
-    action = rl_context.update(request.state, request.goal)
+    action = rl_context.update(request.state)
     action.append(0)
     return UpdateNetworkResponse(action)
 
@@ -30,11 +30,8 @@ def main():
     num_obstacles = len(config["obstacles"])
     config = config["rl"]
     import cfp_networks
-    state_structure = cfp_networks.parse_state_pattern(config["state_pattern"], num_obstacles)
-    config["state_dim"] = reduce(lambda x, y: x + y, (x[2] for x in state_structure))
-    config["action_dim"] = 3
-    reward_function = cfp_networks.RewardFunction(state_structure)
-    rl_context = cfp_networks.context_mapping[config["type"]](reward_function=reward_function, **config, **config[config["type"]])
+    state_decoder = cfp_networks.StateDecoder(config["state_pattern"], num_obstacles)
+    rl_context = cfp_networks.context_mapping[config["type"]](state_decoder=state_decoder, **config, **config[config["type"]])
     rl_context.load()
     rospy.init_node("rl_training", anonymous=True)
     signal.signal(signal.SIGINT, signal_handle)

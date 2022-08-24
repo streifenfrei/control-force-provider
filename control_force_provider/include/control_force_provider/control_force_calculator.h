@@ -86,7 +86,6 @@ class StateProvider {
     unsigned int history_length_ = 1;
     unsigned int history_stride_ = 0;
     StatePopulator() = default;
-    ;
     void populate(torch::Tensor& state, int& index);
     [[nodiscard]] unsigned int getDim() const { return length_ * vectors_.size() * history_length_; };
   };
