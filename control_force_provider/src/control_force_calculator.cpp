@@ -176,7 +176,7 @@ StateProvider::StateProvider(const ControlForceCalculator& cfc, const std::strin
 
 void StateProvider::StatePopulator::populate(torch::Tensor& state, int& index) {
   auto state_accessor = state.accessor<double, 1>();
-  for (size_t i = 0; i < histories_.size(); i++) {
+  for (size_t i = 0; i < vectors_.size(); i++) {
     const double* vector = vectors_[i];
     if (histories_.size() <= i) histories_.emplace_back();
     std::deque<Eigen::VectorXd>& history = histories_[i];
@@ -187,8 +187,9 @@ void StateProvider::StatePopulator::populate(torch::Tensor& state, int& index) {
       while (history.size() <= history_length_);
       history.pop_front();
     }
-    for (auto& vec : history)
+    for (auto& vec : history) {
       for (size_t j = 0; j < length_; j++) state_accessor[index++] = vec[j];
+    }
   }
   stride_index_ = (stride_index_ - 1) % (history_stride_ + 1);
 }
@@ -225,7 +226,6 @@ Vector4d ReinforcementLearningAgent::getAction() {
       for (size_t i = 0; i < state_provider->getStateDim(); i++) state_vector.push_back(state_tensor_accessor[i]);
       control_force_provider_msgs::UpdateNetwork srv;
       srv.request.state = state_vector;
-      for (size_t i = 0; i < 4; i++) srv.request.goal[i] = goal[i];
       if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to call training service.");
       return Vector4d(srv.response.action.data());
     } else
