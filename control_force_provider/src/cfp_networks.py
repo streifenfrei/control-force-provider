@@ -3,6 +3,7 @@ import re
 import random
 import torch
 import torch.nn as nn
+import numpy as np
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.tensorboard import SummaryWriter
 from collections import namedtuple, deque
@@ -40,11 +41,12 @@ class StateDecoder:
                 if arg[0] == "h":
                     history_length = int(arg[1:])
             length = 1 if id == StateDecoder.Value.time else 3
-            length *= num_obstacles if id == StateDecoder.Value.obstacle_position or id == StateDecoder.Value.obstacle_rcm else 1
+            length *= num_obstacles if id in [StateDecoder.Value.obstacle_position, StateDecoder.Value.obstacle_rcm] else 1
             length *= history_length
             self.mapping[id] = (index, length)
             structure.append((id, index, length))
             index += length
+        self.num_obstacles = num_obstacles
 
     def get_state_dim(self):
         return reduce(lambda x, y: x + y, (x[1] for x in self.mapping.values()))
@@ -52,16 +54,37 @@ class StateDecoder:
     def get_value(self, state, type):
         if type in self.mapping.keys():
             index, length = self.mapping[type]
-            return state[index:index + length]
+            if type in [StateDecoder.Value.obstacle_position, StateDecoder.Value.obstacle_rcm]:
+                step_size = int(length / self.num_obstacles)
+                out = []
+                for i in range(0, length, step_size):
+                    out.append(state[index + i:index + i + step_size])
+            else:
+                out = state[index:index + length]
+            return out
 
 
 class RewardFunction:
 
-    def __init__(self, state_decoder):
+    def __init__(self, state_decoder, fmax, dc, mc, dg, rg):
         self.state_decoder = state_decoder
+        self.fmax = float(fmax)
+        self.dc = float(dc)
+        self.mc = float(mc)
+        self.dg = float(dg)
+        self.rg = float(rg)
 
-    def __call__(self, state):
-        return torch.tensor([0])
+    def __call__(self, state, last_state):
+        goal = np.array(self.state_decoder.get_value(state, StateDecoder.Value.goal))
+        robot_position = np.array(self.state_decoder.get_value(state, StateDecoder.Value.robot_position))
+        last_robot_position = np.array(self.state_decoder.get_value(last_state, StateDecoder.Value.robot_position))
+        obstacle_positions = (np.array(x[:3]) for x in self.state_decoder.get_value(state, StateDecoder.Value.obstacle_position))
+        distance_to_goal = np.linalg.norm(goal - robot_position)
+        motion_reward = (distance_to_goal - np.linalg.norm(goal - last_robot_position)) / self.fmax
+        collision_penalty = - reduce(lambda x, y: x + y, ((self.dc / np.linalg.norm(o - robot_position)) ** self.mc for o in obstacle_positions))
+        goal_reward = 0 if distance_to_goal > self.dg else self.rg
+        total_reward = motion_reward + collision_penalty + goal_reward
+        return torch.tensor([total_reward]), motion_reward, collision_penalty, goal_reward
 
 
 class ReplayBuffer:
@@ -70,11 +93,7 @@ class ReplayBuffer:
         self.buffer = deque([], maxlen=capacity)
 
     def push(self, *args):
-        valid = True
-        for arg in args:
-            if torch.max(torch.isnan(arg)) or torch.max(torch.isinf(arg)):
-                valid = False
-                break
+        valid = any(torch.max(torch.isnan(arg)) or torch.max(torch.isinf(arg)) for arg in args)
         if valid:
             self.buffer.append(Transition(*args))
 
@@ -128,7 +147,7 @@ class DQN(nn.Module):
 
 
 class RLContext(ABC):
-    def __init__(self, state_decoder, discount_factor, batch_size, updates_per_step, max_force, output_directory, **kwargs):
+    def __init__(self, state_decoder, discount_factor, batch_size, updates_per_step, max_force, dc, mc, dg, rg, output_directory, **kwargs):
         self.state_decoder = state_decoder
         self.state_dim = state_decoder.get_state_dim()
         self.action_dim = action_dim
@@ -138,7 +157,7 @@ class RLContext(ABC):
         self.max_force = max_force
         self.output_dir = output_directory
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"))
-        self.reward_function = RewardFunction(state_decoder)
+        self.reward_function = RewardFunction(state_decoder, max_force, dc, mc, dg, rg)
         self.last_state = None
         self.action = None
         self.epoch = 0
@@ -188,13 +207,18 @@ class DQNContext(RLContext):
 
     def update(self, state):
         goal = self.state_decoder.get_value(state, StateDecoder.Value.goal)
-        reward = self.reward_function(state)
-        self.summary_writer.add_scalar("reward/train", reward, self.epoch)
-        state = torch.tensor(state)
         if goal != self.goal:
             self.summary_writer.add_text("episodes/train", f"New goal: {goal}", self.epoch)
             self.goal = goal
+            self.last_state = None
+        state_py = state
+        state = torch.tensor(state)
         if self.last_state is not None:
+            reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_py, self.last_state)
+            self.summary_writer.add_scalar("reward/total/train", reward, self.epoch)
+            self.summary_writer.add_scalar("reward/motion/train", motion_reward, self.epoch)
+            self.summary_writer.add_scalar("reward/collision/train", collision_penalty, self.epoch)
+            self.summary_writer.add_scalar("reward/goal/train", goal_reward, self.epoch)
             self.replay_buffer.push(self.last_state, self.action, state, reward)
         self.last_state = state
         if len(self.replay_buffer) >= self.batch_size:

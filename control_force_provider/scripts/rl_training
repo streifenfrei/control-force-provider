@@ -31,7 +31,7 @@ def main():
     config = config["rl"]
     import cfp_networks
     state_decoder = cfp_networks.StateDecoder(config["state_pattern"], num_obstacles)
-    rl_context = cfp_networks.context_mapping[config["type"]](state_decoder=state_decoder, **config, **config[config["type"]])
+    rl_context = cfp_networks.context_mapping[config["type"]](state_decoder=state_decoder, **config, **config[config["type"]], **config["reward_function"])
     rl_context.load()
     rospy.init_node("rl_training", anonymous=True)
     signal.signal(signal.SIGINT, signal_handle)
