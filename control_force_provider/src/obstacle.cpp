@@ -32,7 +32,7 @@ WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string
   rcm_ = {rcm_raw[0], rcm_raw[1], rcm_raw[2]};
 }
 
-void WaypointsObstacle::getPosition(Vector4d& position) {
+Vector4d WaypointsObstacle::getPosition() {
   double time = fmod(ros::Time::now().toSec(), total_duration_);
   unsigned int segment;
   double duration_sum = 0;
@@ -47,6 +47,6 @@ void WaypointsObstacle::getPosition(Vector4d& position) {
   double length_on_segment = segments_lengths_[segment] * position_on_segment;
   Vector3d segment_part = segments_normalized_[segment] * length_on_segment;
   Vector3d position3d = waypoints_[segment] + segment_part;
-  position = {position3d[0], position3d[1], position3d[2], 0};
+  return {position3d[0], position3d[1], position3d[2], 0};
 }
 }  // namespace control_force_provider::backend

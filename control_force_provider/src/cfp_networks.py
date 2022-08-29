@@ -1,5 +1,4 @@
 import os.path
-import re
 import random
 import torch
 import torch.nn as nn
@@ -8,80 +7,30 @@ from torch.nn.utils import clip_grad_norm_
 from torch.utils.tensorboard import SummaryWriter
 from collections import namedtuple, deque
 from abc import ABC, abstractmethod
-from enum import Enum
 from functools import reduce
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
-action_dim = 3
-pattern_regex = "([a-z]{3})\\((([a-z][0-9]+)*)\\)"
-arg_regex = "[a-z][0-9]+"
-
-
-class StateDecoder:
-    class Value(str, Enum):
-        robot_position = "ree"
-        robot_rcm = "rpp"
-        obstacle_position = "oee"
-        obstacle_rcm = "opp"
-        goal = "gol"
-        time = "tim"
-
-    def __init__(self, state_pattern, num_obstacles):
-        self.mapping = {}
-        ids = re.findall(pattern_regex, state_pattern)
-        structure = []
-        index = 0
-        for id in ids:
-            args = id[1]
-            id = id[0]
-            history_length = 1
-            for arg in re.findall(arg_regex, args):
-                if arg[0] == "h":
-                    history_length = int(arg[1:])
-            length = 1 if id == StateDecoder.Value.time else 3
-            length *= num_obstacles if id in [StateDecoder.Value.obstacle_position, StateDecoder.Value.obstacle_rcm] else 1
-            length *= history_length
-            self.mapping[id] = (index, length)
-            structure.append((id, index, length))
-            index += length
-        self.num_obstacles = num_obstacles
-
-    def get_state_dim(self):
-        return reduce(lambda x, y: x + y, (x[1] for x in self.mapping.values()))
-
-    def get_value(self, state, type):
-        if type in self.mapping.keys():
-            index, length = self.mapping[type]
-            if type in [StateDecoder.Value.obstacle_position, StateDecoder.Value.obstacle_rcm]:
-                step_size = int(length / self.num_obstacles)
-                out = []
-                for i in range(0, length, step_size):
-                    out.append(state[index + i:index + i + step_size])
-            else:
-                out = state[index:index + length]
-            return out
 
 
 class RewardFunction:
 
-    def __init__(self, state_decoder, fmax, dc, mc, dg, rg):
-        self.state_decoder = state_decoder
+    def __init__(self, fmax, dc, mc, dg, rg):
         self.fmax = float(fmax)
         self.dc = float(dc)
         self.mc = float(mc)
         self.dg = float(dg)
         self.rg = float(rg)
 
-    def __call__(self, state, last_state):
-        goal = np.array(self.state_decoder.get_value(state, StateDecoder.Value.goal))
-        robot_position = np.array(self.state_decoder.get_value(state, StateDecoder.Value.robot_position))
-        last_robot_position = np.array(self.state_decoder.get_value(last_state, StateDecoder.Value.robot_position))
-        obstacle_positions = (np.array(x[:3]) for x in self.state_decoder.get_value(state, StateDecoder.Value.obstacle_position))
+    def __call__(self, state_dict, last_state_dict):
+        goal = np.array(state_dict["goal"])
+        robot_position = np.array(state_dict["robot_position"])
+        last_robot_position = np.array(last_state_dict["robot_position"])
+        distance_vectors = (np.array(state_dict["points_on_l2"][x:x + 3]) - np.array(state_dict["points_on_l1"][x:x + 3]) for x in range(0, len(state_dict["points_on_l1"]), 3))
         distance_to_goal = np.linalg.norm(goal - robot_position)
         motion_reward = (distance_to_goal - np.linalg.norm(goal - last_robot_position)) / self.fmax
-        collision_penalty = - reduce(lambda x, y: x + y, ((self.dc / np.linalg.norm(o - robot_position)) ** self.mc for o in obstacle_positions))
+        collision_penalty = - reduce(lambda x, y: x + y, ((self.dc / np.linalg.norm(o - robot_position[:3])) ** self.mc for o in distance_vectors))
         goal_reward = 0 if distance_to_goal > self.dg else self.rg
         total_reward = motion_reward + collision_penalty + goal_reward
         return torch.tensor([total_reward]), motion_reward, collision_penalty, goal_reward
@@ -147,9 +96,8 @@ class DQN(nn.Module):
 
 
 class RLContext(ABC):
-    def __init__(self, state_decoder, discount_factor, batch_size, updates_per_step, max_force, dc, mc, dg, rg, output_directory, **kwargs):
-        self.state_decoder = state_decoder
-        self.state_dim = state_decoder.get_state_dim()
+    def __init__(self, state_dim, action_dim, discount_factor, batch_size, updates_per_step, max_force, dc, mc, dg, rg, output_directory, **kwargs):
+        self.state_dim = state_dim
         self.action_dim = action_dim
         self.discount_factor = discount_factor
         self.batch_size = batch_size
@@ -157,8 +105,8 @@ class RLContext(ABC):
         self.max_force = max_force
         self.output_dir = output_directory
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"))
-        self.reward_function = RewardFunction(state_decoder, max_force, dc, mc, dg, rg)
-        self.last_state = None
+        self.reward_function = RewardFunction(max_force, dc, mc, dg, rg)
+        self.last_state_dict = None
         self.action = None
         self.epoch = 0
         self.goal = None
@@ -205,22 +153,22 @@ class DQNContext(RLContext):
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
             self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
 
-    def update(self, state):
-        goal = self.state_decoder.get_value(state, StateDecoder.Value.goal)
+    def update(self, state_dict):
+        state = state_dict["state"]
+        goal = state_dict["goal"]
         if goal != self.goal:
             self.summary_writer.add_text("episodes/train", f"New goal: {goal}", self.epoch)
             self.goal = goal
-            self.last_state = None
-        state_py = state
+            self.last_state_dict = None
         state = torch.tensor(state)
-        if self.last_state is not None:
-            reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_py, self.last_state)
+        if self.last_state_dict is not None:
+            reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_dict, self.last_state_dict)
             self.summary_writer.add_scalar("reward/total/train", reward, self.epoch)
             self.summary_writer.add_scalar("reward/motion/train", motion_reward, self.epoch)
             self.summary_writer.add_scalar("reward/collision/train", collision_penalty, self.epoch)
             self.summary_writer.add_scalar("reward/goal/train", goal_reward, self.epoch)
-            self.replay_buffer.push(self.last_state, self.action, state, reward)
-        self.last_state = state
+            self.replay_buffer.push(torch.tensor(self.last_state_dict["state"]), self.action, state, reward)
+        self.last_state_dict = state_dict
         if len(self.replay_buffer) >= self.batch_size:
             for i in range(self.updates_per_step):
                 batch = Transition(*zip(*self.replay_buffer.sample(self.batch_size)))

@@ -13,7 +13,7 @@ class Obstacle {
 
  public:
   Obstacle(const std::string& id) : id_(id){};
-  virtual void getPosition(Eigen::Vector4d& position) = 0;
+  virtual Eigen::Vector4d getPosition() = 0;
   virtual ~Obstacle() = default;
 
   [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm_; }
@@ -31,7 +31,7 @@ class WaypointsObstacle : public Obstacle {
 
  public:
   WaypointsObstacle(const YAML::Node& config, const std::string& id);
-  void getPosition(Eigen::Vector4d& position) override;
+  Eigen::Vector4d getPosition() override;
   ~WaypointsObstacle() override = default;
 };
 }  // namespace control_force_provider::backend

@@ -3,14 +3,20 @@
 import rospy
 import yaml
 import signal
+import re
 from control_force_provider_msgs.srv import UpdateNetwork, UpdateNetworkResponse
-from functools import reduce
 
 rl_context = None
+action_dim = 3
+pattern_regex = "([a-z]{3})\\((([a-z][0-9]+)*)\\)"
+arg_regex = "[a-z][0-9]+"
 
 
 def service_handle(request):
-    action = rl_context.update(request.state)
+    state_dict = {}
+    for field in request.__slots__:
+        state_dict[field] = getattr(request, field)
+    action = rl_context.update(state_dict)
     action.append(0)
     return UpdateNetworkResponse(action)
 
@@ -18,6 +24,23 @@ def service_handle(request):
 def signal_handle(sig, frame):
     if rl_context is not None:
         rl_context.save()
+
+
+def state_dim_from_pattern(state_pattern, num_obstacles):
+    ids = re.findall(pattern_regex, state_pattern)
+    index = 0
+    for id in ids:
+        args = id[1]
+        id = id[0]
+        history_length = 1
+        for arg in re.findall(arg_regex, args):
+            if arg[0] == "h":
+                history_length = int(arg[1:])
+        length = 1 if id == "tim" else 3
+        length *= num_obstacles if id in ["oee", "ove", "opp"] else 1
+        length *= history_length
+        index += length
+    return index
 
 
 def main():
@@ -30,8 +53,9 @@ def main():
     num_obstacles = len(config["obstacles"])
     config = config["rl"]
     import cfp_networks
-    state_decoder = cfp_networks.StateDecoder(config["state_pattern"], num_obstacles)
-    rl_context = cfp_networks.context_mapping[config["type"]](state_decoder=state_decoder, **config, **config[config["type"]], **config["reward_function"])
+    config["state_dim"] = state_dim_from_pattern(config["state_pattern"], num_obstacles)
+    config["action_dim"] = action_dim
+    rl_context = cfp_networks.context_mapping[config["type"]](**config, **config[config["type"]], **config["reward_function"])
     rl_context.load()
     rospy.init_node("rl_training", anonymous=True)
     signal.signal(signal.SIGINT, signal_handle)

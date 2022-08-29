@@ -21,17 +21,23 @@ class ControlForceCalculator {
 
  protected:
   Eigen::Vector4d ee_position;
+  Eigen::Vector4d ee_velocity;
   Eigen::Vector3d rcm;
   Eigen::Vector4d goal;
   ros::Time start_time;
   double elapsed_time;
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
   std::vector<Eigen::Vector4d> ob_positions;
+  std::vector<Eigen::Vector4d> ob_velocities;
   std::vector<Eigen::Vector3d> ob_rcms;
+  std::vector<Eigen::Vector3d> points_on_l1_;
+  std::vector<Eigen::Vector3d> points_on_l2_;
   friend class Visualizer;
   friend class StateProvider;
 
   virtual void getForceImpl(Eigen::Vector4d& force) = 0;
+
+  void updateDistanceVectors();
 
  public:
   explicit ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_);
@@ -58,8 +64,6 @@ class PotentialFieldMethod : public ControlForceCalculator {
   const double repulsion_distance_;
   const double z_translation_strength_;
   const double min_rcm_distance_;
-  std::vector<Eigen::Vector3d> points_on_l1_;
-  std::vector<Eigen::Vector3d> points_on_l2_;
   friend class Visualizer;
 
  protected:

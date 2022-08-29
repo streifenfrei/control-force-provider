@@ -15,19 +15,71 @@ ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obs
   for (auto& obstacle : obstacles) {
     ob_rcms.push_back(obstacle->getRCM());
     ob_positions.emplace_back();
+    ob_velocities.emplace_back();
+    points_on_l1_.emplace_back();
+    points_on_l2_.emplace_back();
   }
 }
 
 void ControlForceCalculator::getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position_) {
   if (!goal_available_) setGoal(ee_position);
   if (rcm_available_) {
+    ee_velocity = ee_position_ - ee_position;
     ee_position = ee_position_;
     elapsed_time = (ros::Time::now() - start_time).toSec();
     for (size_t i = 0; i < obstacles.size(); i++) {
-      obstacles[i]->getPosition(ob_positions[i]);
+      Vector4d new_ob_position = obstacles[i]->getPosition();
+      ob_velocities[i] = new_ob_position - ob_positions[i];
+      ob_positions[i] = new_ob_position;
       ob_rcms[i] = obstacles[i]->getRCM();
     }
+    updateDistanceVectors();
     getForceImpl(force);
+  }
+}
+
+void ControlForceCalculator::updateDistanceVectors() {
+  const Vector3d& goal3d = goal.head(3);
+  const Vector3d& ee_position3d = ee_position.head(3);
+  const Vector3d& a1 = rcm;
+  Vector3d b1 = ee_position3d - a1;
+  for (size_t i = 0; i < obstacles.size(); i++) {
+    Vector3d ob_position = ob_positions[i].head(3);
+    //  for the vector between "robot" and "obstacle" we take the shortest line between both tools:
+    //  tool1:                                                    l1 = a1 + t*b1
+    //  tool2:                                                    l2 = a2 + s*b2
+    const Vector3d& a2 = ob_rcms[i];
+    Vector3d b2 = ob_position - a2;
+    //  general vector between l1 and l2:                         v = a2 - a1 + sb2 - t*b1 = a' + s*b2 - t*b1
+    Vector3d a_diff = a2 - a1;
+    //  the shortest line is perpendicular to both tools (v•b1 = v•b2 = 0). We want to solve this LEQ for t and s:
+    //                b1•a' + s*b1•b2 - t*b1•b1 = 0
+    //                b2•a' + s*b2•b2 - t*b2•b1 = 0
+    //  substitute e1 = b1•b2, e2 = b2•b2 and e3 = b1•b1
+    double e1 = b1.dot(b2);
+    double e2 = b2.dot(b2);
+    double e3 = b1.dot(b1);
+    //                b1•a' + s*e1 - t*e3 = 0                                 |* e2
+    //                b2•a' + s*e2 - t*e1 = 0                                 |* e1
+    //                ————————————————————————————
+    //                b1•a'*e2 + s*e1*e2 - t*e2*e3 = 0                        -
+    //                b2•a'*e1 + s*e1*e2 - t*e1*e1 = 0
+    //                ————————————————————————————————
+    //                b1•a'*e2 - t*e2*e3 - b2•a'*e1 + t*e1*e1 = 0             |+ b2•a'*e1, - b1•a'*e2
+    //                ———————————————————————————————————————————
+    //                t*(e1*e1 - e2*e3) = a'•(b2*e1 - b1*e2)                  |: (e1*e1 - b1•b1*e2)
+    //                ——————————————————————————————————————
+    //                t = a'•(b2*e1 - b1*e2) / (e1*e1 - e2*e3)
+    double t = a_diff.dot(b2 * e1 - b1 * e2) / (e1 * e1 - e2 * e3);
+    //  use the first equation to get s:
+    //                s*e1 = t*e3 - b1•a'                                     |: e1
+    //                ———————————————————
+    //                s = (t*e3 - b1•a') / e1
+    double s = (t * e3 - b1.dot(a_diff)) / e1;
+    t = boost::algorithm::clamp(t, 0, 1);
+    s = boost::algorithm::clamp(s, 0, 1);
+    points_on_l1_[i] = (a1 + t * b1);
+    points_on_l2_[i] = (a2 + s * b2);
   }
 }
 
@@ -65,53 +117,13 @@ void PotentialFieldMethod::getForceImpl(Vector4d& force) {
   double l1_length = b1.norm();
   double min_l2_to_l1_distance = repulsion_distance_;
   for (size_t i = 0; i < obstacles.size(); i++) {
-    Vector3d ob_position = ob_positions[i].head(3);
-    //  for the vector between "robot" and "obstacle" we take the shortest line between both tools:
-    //  tool1:                                                    l1 = a1 + t*b1
-    //  tool2:                                                    l2 = a2 + s*b2
-    const Vector3d& a2 = ob_rcms[i];
-    Vector3d b2 = ob_position - a2;
-    //  general vector between l1 and l2:                         v = a2 - a1 + sb2 - t*b1 = a' + s*b2 - t*b1
-    Vector3d a_diff = a2 - a1;
-    //  the shortest line is perpendicular to both tools (v•b1 = v•b2 = 0). We want to solve this LEQ for t and s:
-    //                b1•a' + s*b1•b2 - t*b1•b1 = 0
-    //                b2•a' + s*b2•b2 - t*b2•b1 = 0
-    //  substitute e1 = b1•b2, e2 = b2•b2 and e3 = b1•b1
-    double e1 = b1.dot(b2);
-    double e2 = b2.dot(b2);
-    double e3 = b1.dot(b1);
-    //                b1•a' + s*e1 - t*e3 = 0                                 |* e2
-    //                b2•a' + s*e2 - t*e1 = 0                                 |* e1
-    //                ————————————————————————————
-    //                b1•a'*e2 + s*e1*e2 - t*e2*e3 = 0                        -
-    //                b2•a'*e1 + s*e1*e2 - t*e1*e1 = 0
-    //                ————————————————————————————————
-    //                b1•a'*e2 - t*e2*e3 - b2•a'*e1 + t*e1*e1 = 0             |+ b2•a'*e1, - b1•a'*e2
-    //                ———————————————————————————————————————————
-    //                t*(e1*e1 - e2*e3) = a'•(b2*e1 - b1*e2)                  |: (e1*e1 - b1•b1*e2)
-    //                ——————————————————————————————————————
-    //                t = a'•(b2*e1 - b1*e2) / (e1*e1 - e2*e3)
-    double t = a_diff.dot(b2 * e1 - b1 * e2) / (e1 * e1 - e2 * e3);
-
-    if (t > 0) {  // both points lie past the RCMs (=inside the abdomen). If not we don't need to calculate the vector anyway
-      //  use the first equation to get s:
-      //                s*e1 = t*e3 - b1•a'                                     |: e1
-      //                ———————————————————
-      //                s = (t*e3 - b1•a') / e1
-      double s = (t * e3 - b1.dot(a_diff)) / e1;
-      t = boost::algorithm::clamp(t, 0, 1);
-      s = boost::algorithm::clamp(s, 0, 1);
-      points_on_l1_[i] = (a1 + t * b1);
-      points_on_l2_[i] = (a2 + s * b2);
-
-      Vector3d l2_to_l1 = points_on_l1_[i] - points_on_l2_[i];
-      double l2_to_l1_distance = l2_to_l1.norm();
-      // continue with PFM
-      if (l2_to_l1_distance < repulsion_distance_) {
-        repulsive_vector += (repulsion_strength_ / l2_to_l1_distance - repulsion_strength_ / repulsion_distance_) / (l2_to_l1_distance * l2_to_l1_distance) *
-                            l2_to_l1.normalized() * t * l1_length;
-        if (l2_to_l1_distance < min_l2_to_l1_distance) min_l2_to_l1_distance = l2_to_l1_distance;
-      }
+    double t = (points_on_l1_[i] - rcm).norm() / l1_length;
+    Vector3d l2_to_l1 = points_on_l1_[i] - points_on_l2_[i];
+    double l2_to_l1_distance = l2_to_l1.norm();
+    if (l2_to_l1_distance < repulsion_distance_) {
+      repulsive_vector += (repulsion_strength_ / l2_to_l1_distance - repulsion_strength_ / repulsion_distance_) / (l2_to_l1_distance * l2_to_l1_distance) *
+                          l2_to_l1.normalized() * t * l1_length;
+      if (l2_to_l1_distance < min_l2_to_l1_distance) min_l2_to_l1_distance = l2_to_l1_distance;
     }
   }
   if (min_l2_to_l1_distance < repulsion_distance_) {
@@ -139,10 +151,14 @@ StateProvider::StatePopulator StateProvider::createPopulatorFromString(const Con
   populator.length_ = 3;
   if (id == "ree") {
     populator.vectors_.push_back(cfc.ee_position.data());
+  } else if (id == "rve") {
+    populator.vectors_.push_back(cfc.ee_velocity.data());
   } else if (id == "rpp") {
     populator.vectors_.push_back(cfc.rcm.data());
   } else if (id == "oee") {
     for (auto& pos : cfc.ob_positions) populator.vectors_.push_back(pos.data());
+  } else if (id == "ove") {
+    for (auto& vel : cfc.ob_velocities) populator.vectors_.push_back(vel.data());
   } else if (id == "opp") {
     for (auto& rcm : cfc.ob_rcms) populator.vectors_.push_back(rcm.data());
   } else if (id == "gol") {
@@ -226,6 +242,19 @@ Vector4d ReinforcementLearningAgent::getAction() {
       for (size_t i = 0; i < state_provider->getStateDim(); i++) state_vector.push_back(state_tensor_accessor[i]);
       control_force_provider_msgs::UpdateNetwork srv;
       srv.request.state = state_vector;
+      for (size_t i = 0; i < 4; i++) srv.request.robot_position[i] = ee_position[i];
+      for (size_t i = 0; i < 4; i++) srv.request.robot_velocity[i] = ee_velocity[i];
+      for (size_t i = 0; i < 3; i++) srv.request.robot_rcm[i] = rcm[i];
+      for (auto& ob_position : ob_positions)
+        for (size_t i = 0; i < ob_position.size(); i++) srv.request.obstacles_positions.push_back(ob_position[i]);
+      for (auto& ob_velocity : ob_velocities)
+        for (size_t i = 0; i < ob_velocity.size(); i++) srv.request.obstacles_velocities.push_back(ob_velocity[i]);
+      for (auto& ob_rcm : ob_rcms)
+        for (size_t i = 0; i < ob_rcm.size(); i++) srv.request.obstacles_rcms.push_back(ob_rcm[i]);
+      for (auto& point : points_on_l1_)
+        for (size_t i = 0; i < point.size(); i++) srv.request.points_on_l1.push_back(point[i]);
+      for (auto& point : points_on_l2_)
+        for (size_t i = 0; i < point.size(); i++) srv.request.points_on_l2.push_back(point[i]);
       if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to call training service.");
       return Vector4d(srv.response.action.data());
     } else
