@@ -58,12 +58,13 @@ class StateAugmenter:
 
 class RewardFunction:
 
-    def __init__(self, fmax, dc, mc, dg, rg):
+    def __init__(self, fmax, interval_duration, dc, mc, dg, rg):
         self.fmax = float(fmax)
         self.dc = float(dc)
         self.mc = float(mc)
         self.dg = float(dg)
         self.rg = float(rg)
+        self.interval_duration = float(interval_duration)
 
     def __call__(self, state_dict, last_state_dict):
         goal = np.array(state_dict["goal"])
@@ -71,7 +72,7 @@ class RewardFunction:
         last_robot_position = np.array(last_state_dict["robot_position"])
         distance_vectors = (np.array(state_dict["points_on_l2"][x:x + 3]) - np.array(state_dict["points_on_l1"][x:x + 3]) for x in range(0, len(state_dict["points_on_l1"]), 3))
         distance_to_goal = np.linalg.norm(goal - robot_position)
-        motion_reward = (distance_to_goal - np.linalg.norm(goal - last_robot_position)) / self.fmax
+        motion_reward = (np.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration)
         collision_penalty = - reduce(lambda x, y: x + y, ((self.dc / np.linalg.norm(o - robot_position[:3])) ** self.mc for o in distance_vectors))
         goal_reward = 0 if distance_to_goal > self.dg else self.rg
         total_reward = motion_reward + collision_penalty + goal_reward
@@ -280,7 +281,7 @@ class DQNContext(RLContext):
                 loss.backward()
                 clip_grad_norm_(self.dqn_policy.parameters(), 1)
                 self.optimizer.step()
-        self.epoch += 1
+            self.epoch += 1
         if self.epoch % self.target_network_update_rate == 0:
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
         self.dqn_policy.eval()

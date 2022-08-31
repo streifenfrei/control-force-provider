@@ -55,7 +55,7 @@ def main():
     state_augmenter = cfp_networks.StateAugmenter(config["state_pattern"], num_obstacles, **config["state_augmenter"])
     config["state_dim"] = reduce(lambda x, y: x + y, (x[1] for x in state_augmenter.mapping.values()))
     config["action_dim"] = action_dim
-    config["reward_function"] = cfp_networks.RewardFunction(config["max_force"], **config["reward_function"])
+    config["reward_function"] = cfp_networks.RewardFunction(config["max_force"], config["interval_duration"], **config["reward_function"])
     config["state_augmenter"] = state_augmenter
     rl_context = cfp_networks.context_mapping[config["type"]](**config, **config[config["type"]])
     rl_context.load()
