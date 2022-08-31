@@ -255,6 +255,8 @@ Vector4d ReinforcementLearningAgent::getAction() {
         for (size_t i = 0; i < point.size(); i++) srv.request.points_on_l1.push_back(point[i]);
       for (auto& point : points_on_l2_)
         for (size_t i = 0; i < point.size(); i++) srv.request.points_on_l2.push_back(point[i]);
+      for (size_t i = 0; i < 4; i++) srv.request.goal[i] = goal[i];
+      srv.request.elapsed_time = elapsed_time;
       if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to call training service.");
       return Vector4d(srv.response.action.data());
     } else
