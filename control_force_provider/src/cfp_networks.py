@@ -1,17 +1,59 @@
 import os.path
 import random
+import re
 import torch
 import torch.nn as nn
 import numpy as np
+from scipy.spatial.transform import Rotation
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.tensorboard import SummaryWriter
 from collections import namedtuple, deque
 from abc import ABC, abstractmethod
 from functools import reduce
+from enum import Enum
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+
+
+class StateAugmenter:
+    class _StatePartID(str, Enum):
+        robot_position = "ree"
+        robot_rcm = "rpp"
+        obstacle_position = "oee"
+        obstacle_rcm = "opp"
+        goal = "gol"
+        time = "tim"
+
+    _pattern_regex = "([a-z]{3})\\((([a-z][0-9]+)*)\\)"
+    _arg_regex = "[a-z][0-9]+"
+
+    def __init__(self, state_pattern, num_obstacles, ob_sigma, ob_max_noise):
+        self.mapping = {}
+        ids = re.findall(self._pattern_regex, state_pattern)
+        index = 0
+        for id in ids:
+            args = id[1]
+            id = id[0]
+            history_length = 1
+            for arg in re.findall(self._arg_regex, args):
+                if arg[0] == "h":
+                    history_length = int(arg[1:])
+            length = 1 if id == StateAugmenter._StatePartID.time else 3
+            length *= num_obstacles if id in [StateAugmenter._StatePartID.obstacle_position, StateAugmenter._StatePartID.obstacle_rcm] else 1
+            length *= history_length
+            self.mapping[id] = (index, length)
+            index += length
+        self.num_obstacles = num_obstacles
+        self.rng = np.random.default_rng()
+        self.ob_sigma = ob_sigma
+        self.ob_max_noise = ob_max_noise
+
+    def __call__(self, state):
+        index, length = self.mapping[StateAugmenter._StatePartID.obstacle_position]
+        state[:, index:index + length] += np.clip(self.rng.multivariate_normal(np.zeros(length), np.identity(length) * self.ob_sigma, len(state)), -self.ob_max_noise, self.ob_max_noise)
+        return state
 
 
 class RewardFunction:
@@ -33,7 +75,7 @@ class RewardFunction:
         collision_penalty = - reduce(lambda x, y: x + y, ((self.dc / np.linalg.norm(o - robot_position[:3])) ** self.mc for o in distance_vectors))
         goal_reward = 0 if distance_to_goal > self.dg else self.rg
         total_reward = motion_reward + collision_penalty + goal_reward
-        return torch.tensor([total_reward]), motion_reward, collision_penalty, goal_reward
+        return total_reward, motion_reward, collision_penalty, goal_reward
 
 
 class ReplayBuffer:
@@ -42,8 +84,8 @@ class ReplayBuffer:
         self.buffer = deque([], maxlen=capacity)
 
     def push(self, *args):
-        valid = any(torch.max(torch.isnan(arg)) or torch.max(torch.isinf(arg)) for arg in args)
-        if valid:
+        invalid = any(np.any(np.isnan(arg)) or np.any(np.isinf(arg)) for arg in args)
+        if not invalid:
             self.buffer.append(Transition(*args))
 
     def sample(self, batch_size):
@@ -76,10 +118,11 @@ class DQN(nn.Module):
         x = self.bnorm2(x)
         x = torch.relu(self.dense3(x))
         x = self.bnorm3(x)
-        mu = self.max_force * torch.tanh(self.mu_dense(x))
+        mu = self.mu_dense(x)
+        mu_norm = torch.linalg.norm(mu, dim=-1, keepdim=True)
+        mu = (mu / mu_norm) * torch.tanh(mu_norm) * self.max_force
         l_entries = torch.tanh(self.l_dense(x))
         v = self.v_dense(x)
-
         l = torch.zeros((state.shape[0], self.action_dim, self.action_dim)).to(device)
         indices = torch.tril_indices(row=self.action_dim, col=self.action_dim, offset=0)
         l[:, indices[0], indices[1]] = l_entries
@@ -96,32 +139,105 @@ class DQN(nn.Module):
 
 
 class RLContext(ABC):
-    def __init__(self, state_dim, action_dim, discount_factor, batch_size, updates_per_step, max_force, dc, mc, dg, rg, output_directory, **kwargs):
+    def __init__(self,
+                 state_dim,
+                 action_dim,
+                 discount_factor,
+                 batch_size,
+                 updates_per_step,
+                 max_force,
+                 reward_function,
+                 state_augmenter,
+                 output_directory,
+                 exploration_angle_sigma,
+                 exploration_magnitude_sigma,
+                 exploration_decay,
+                 **kwargs):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.discount_factor = discount_factor
         self.batch_size = batch_size
         self.updates_per_step = updates_per_step
-        self.max_force = max_force
+        self.max_force = float(max_force)
         self.output_dir = output_directory
+        self.save_file = os.path.join(self.output_dir, "save.pt")
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"))
-        self.reward_function = RewardFunction(max_force, dc, mc, dg, rg)
+        self.reward_function = reward_function
+        self.state_augmenter = state_augmenter
         self.last_state_dict = None
         self.action = None
         self.epoch = 0
         self.goal = None
+        self.rng = np.random.default_rng()
+        self.exploration_angle_sigma = exploration_angle_sigma
+        self.exploration_magnitude_sigma = exploration_magnitude_sigma
+        self.exploration_decay = exploration_decay
 
     def __del__(self):
         self.summary_writer.flush()
 
     @abstractmethod
-    def save(self): return
+    def _get_state_dict(self):
+        return
 
     @abstractmethod
-    def load(self): return
+    def _load_impl(self, state_dict):
+        return
 
     @abstractmethod
-    def update(self, state): return
+    def _update_impl(self, state, reward):
+        return
+
+    def save(self):
+        state_dict = self._get_state_dict()
+        state_dict = {**state_dict,
+                      "epoch": self.epoch,
+                      "exploration_angle_sigma": self.exploration_angle_sigma,
+                      "exploration_magnitude_sigma": self.exploration_magnitude_sigma}
+        torch.save(state_dict, self.save_file)
+
+    def load(self):
+        if os.path.exists(self.save_file):
+            state_dict = torch.load(self.save_file)
+            self.epoch = state_dict["epoch"]
+            self.exploration_angle_sigma = state_dict["exploration_angle_sigma"]
+            self.exploration_magnitude_sigma = state_dict["exploration_magnitude_sigma"]
+            self._load_impl(state_dict)
+
+    def update(self, state_dict):
+        for key in state_dict:
+            state_dict[key] = np.array(state_dict[key])
+        state = state_dict["state"]
+        goal = state_dict["goal"]
+        if (goal != self.goal).any():
+            self.summary_writer.add_text("episodes/train", f"New goal: {goal}", self.epoch)
+            self.goal = goal
+            self.last_state_dict = None
+        reward = None
+        if self.last_state_dict is not None:
+            # get reward
+            reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_dict, self.last_state_dict)
+            self.summary_writer.add_scalar("reward/total/train", reward, self.epoch)
+            self.summary_writer.add_scalar("reward/motion/train", motion_reward, self.epoch)
+            self.summary_writer.add_scalar("reward/collision/train", collision_penalty, self.epoch)
+            self.summary_writer.add_scalar("reward/goal/train", goal_reward, self.epoch)
+        self._update_impl(state, reward)
+        self.last_state_dict = state_dict
+        # do exploration by rotating the action vector a bit
+        rotation_axis = self.rng.multivariate_normal(np.zeros(3), np.identity(3))
+        rotation_axis[2] = - (rotation_axis[0] * self.action[0] + rotation_axis[1] * self.action[1]) / self.action[2]  # make it perpendicular to the action vector
+        rotation_axis /= np.linalg.norm(rotation_axis)
+        angle = np.deg2rad(self.rng.normal(scale=self.exploration_angle_sigma))
+        rotation_axis *= angle
+        self.exploration_angle_sigma *= self.exploration_decay
+        self.action = Rotation.from_rotvec(rotation_axis).apply(self.action)
+        # change magnitude
+        magnitude = np.linalg.norm(self.action)
+        self.action = self.action / magnitude * np.clip(magnitude + self.rng.normal(scale=self.exploration_magnitude_sigma), 0., self.max_force)
+        self.exploration_magnitude_sigma *= self.exploration_decay
+        self.summary_writer.add_scalar("exploration/angle_sigma", self.exploration_angle_sigma, self.epoch)
+        self.summary_writer.add_scalar("exploration/magnitude_sigma", self.exploration_magnitude_sigma, self.epoch)
+        return self.action
 
 
 class DQNContext(RLContext):
@@ -134,47 +250,26 @@ class DQNContext(RLContext):
         self.optimizer = torch.optim.Adam(self.dqn_policy.parameters())
         self.replay_buffer = ReplayBuffer(replay_buffer_size)
         self.target_network_update_rate = target_network_update_rate
-        self.save_file = os.path.join(self.output_dir, "dqn.pt")
         self.ts_model = os.path.join(self.output_dir, "dqn_ts.pt")
 
-    def save(self):
-        torch.save({
-            "epoch": self.epoch,
-            "model_state_dict": self.dqn_policy.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict()
-        }, self.save_file)
+    def _get_state_dict(self):
+        return {"model_state_dict": self.dqn_policy.state_dict(), "optimizer_state_dict": self.optimizer.state_dict()}
         # torch.jit.script(self.dqn_policy).save(self.ts_model)
 
-    def load(self):
-        if os.path.exists(self.save_file):
-            state_dict = torch.load(self.save_file)
-            self.epoch = state_dict["epoch"]
-            self.dqn_policy.load_state_dict(state_dict["model_state_dict"])
-            self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
-            self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
+    def _load_impl(self, state_dict):
+        self.dqn_policy.load_state_dict(state_dict["model_state_dict"])
+        self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
+        self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
 
-    def update(self, state_dict):
-        state = state_dict["state"]
-        goal = state_dict["goal"]
-        if goal != self.goal:
-            self.summary_writer.add_text("episodes/train", f"New goal: {goal}", self.epoch)
-            self.goal = goal
-            self.last_state_dict = None
-        state = torch.tensor(state)
-        if self.last_state_dict is not None:
-            reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_dict, self.last_state_dict)
-            self.summary_writer.add_scalar("reward/total/train", reward, self.epoch)
-            self.summary_writer.add_scalar("reward/motion/train", motion_reward, self.epoch)
-            self.summary_writer.add_scalar("reward/collision/train", collision_penalty, self.epoch)
-            self.summary_writer.add_scalar("reward/goal/train", goal_reward, self.epoch)
-            self.replay_buffer.push(torch.tensor(self.last_state_dict["state"]), self.action, state, reward)
-        self.last_state_dict = state_dict
+    def _update_impl(self, state, reward):
+        if reward is not None:
+            self.replay_buffer.push(self.last_state_dict["state"], self.action, state, reward)
         if len(self.replay_buffer) >= self.batch_size:
             for i in range(self.updates_per_step):
                 batch = Transition(*zip(*self.replay_buffer.sample(self.batch_size)))
-                state_batch = torch.stack(batch.state).to(device)
-                action_batch = torch.stack(batch.action).to(device)
-                reward_batch = torch.stack(batch.reward).to(device)
+                state_batch = torch.tensor(self.state_augmenter(np.stack(batch.state)), dtype=torch.float32).to(device)
+                action_batch = torch.tensor(np.stack(batch.action), dtype=torch.float32).to(device)
+                reward_batch = torch.tensor(np.stack(batch.reward), dtype=torch.float32).unsqueeze(-1).to(device)
                 q = self.dqn_policy(state_batch, action_batch)[1]
                 with torch.no_grad():
                     v_target = self.dqn_target(state_batch)[2]
@@ -190,9 +285,8 @@ class DQNContext(RLContext):
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
         self.dqn_policy.eval()
         with torch.no_grad():
-            self.action = self.dqn_policy(state.unsqueeze(0))[0].squeeze(0)
+            self.action = self.dqn_policy(torch.tensor(state, dtype=torch.float32).unsqueeze(0))[0].squeeze(0).numpy()
         self.dqn_policy.train()
-        return self.action.tolist()
 
 
 context_mapping = {"dqn": DQNContext}
