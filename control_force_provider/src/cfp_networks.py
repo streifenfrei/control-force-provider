@@ -7,7 +7,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.tensorboard import SummaryWriter
-from collections import namedtuple, deque
+from collections import namedtuple, deque, defaultdict
 from abc import ABC, abstractmethod
 from functools import reduce
 from enum import Enum
@@ -141,6 +141,21 @@ class DQN(nn.Module):
 
 
 class RLContext(ABC):
+    class Accumulator:
+        state = 0
+        count = 0
+
+        def update_state(self, value):
+            self.state += value
+            self.count += 1
+
+        def get_value(self):
+            return self.state / self.count
+
+        def reset(self):
+            self.state = 0
+            self.count = 0
+
     def __init__(self,
                  state_dim,
                  action_dim,
@@ -164,11 +179,14 @@ class RLContext(ABC):
         self.output_dir = output_directory
         self.save_file = os.path.join(self.output_dir, "save.pt")
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"))
+        self.episode_accumulators = defaultdict(RLContext.Accumulator)
         self.reward_function = reward_function
         self.state_augmenter = state_augmenter
         self.last_state_dict = None
         self.action = None
         self.epoch = 0
+        self.episode = 0
+        self.episode_start = 0
         self.goal = None
         self.rng = np.random.default_rng()
         self.exploration_angle_sigma = exploration_angle_sigma
@@ -194,6 +212,7 @@ class RLContext(ABC):
         state_dict = self._get_state_dict()
         state_dict = {**state_dict,
                       "epoch": self.epoch,
+                      "episode": self.episode - 1,
                       "exploration_angle_sigma": self.exploration_angle_sigma,
                       "exploration_magnitude_sigma": self.exploration_magnitude_sigma}
         torch.save(state_dict, self.save_file)
@@ -202,6 +221,7 @@ class RLContext(ABC):
         if os.path.exists(self.save_file):
             state_dict = torch.load(self.save_file)
             self.epoch = state_dict["epoch"]
+            self.episode = state_dict["episode"]
             self.exploration_angle_sigma = state_dict["exploration_angle_sigma"]
             self.exploration_magnitude_sigma = state_dict["exploration_magnitude_sigma"]
             self._load_impl(state_dict)
@@ -212,17 +232,27 @@ class RLContext(ABC):
         state = state_dict["state"]
         goal = state_dict["goal"]
         if (goal != self.goal).any():
-            self.summary_writer.add_text("episodes/train", f"New goal: {goal}", self.epoch)
+            if self.goal is not None:
+                for key in self.episode_accumulators:
+                    self.summary_writer.add_scalar(key, self.episode_accumulators[key].get_value(), self.episode)
+                    self.episode_accumulators[key].reset()
+                self.summary_writer.add_scalar("steps_per_episode", self.epoch - self.episode_start, self.episode)
+                self.episode += 1
             self.goal = goal
+            self.episode_start = self.epoch
             self.last_state_dict = None
         reward = None
         if self.last_state_dict is not None:
             # get reward
             reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_dict, self.last_state_dict)
-            self.summary_writer.add_scalar("reward/total/train", reward, self.epoch)
-            self.summary_writer.add_scalar("reward/motion/train", motion_reward, self.epoch)
-            self.summary_writer.add_scalar("reward/collision/train", collision_penalty, self.epoch)
-            self.summary_writer.add_scalar("reward/goal/train", goal_reward, self.epoch)
+            self.summary_writer.add_scalar("reward/per_epoch/total", reward, self.epoch)
+            self.episode_accumulators["reward/per_episode/total"].update_state(reward)
+            self.summary_writer.add_scalar("reward/per_epoch/motion", motion_reward, self.epoch)
+            self.episode_accumulators["reward/per_episode/motion"].update_state(motion_reward)
+            self.summary_writer.add_scalar("reward/per_epoch/collision", collision_penalty, self.epoch)
+            self.episode_accumulators["reward/per_episode/collision"].update_state(collision_penalty)
+            self.summary_writer.add_scalar("reward/per_epoch/goal/", goal_reward, self.epoch)
+            self.episode_accumulators["reward/per_episode/goal"].update_state(goal)
         self._update_impl(state, reward)
         self.last_state_dict = state_dict
         # do exploration by rotating the action vector a bit
@@ -253,6 +283,7 @@ class DQNContext(RLContext):
         self.replay_buffer = ReplayBuffer(replay_buffer_size)
         self.target_network_update_rate = target_network_update_rate
         self.ts_model = os.path.join(self.output_dir, "dqn_ts.pt")
+        self.loss_accumulator = RLContext.Accumulator()
 
     def _get_state_dict(self):
         return {"model_state_dict": self.dqn_policy.state_dict(), "optimizer_state_dict": self.optimizer.state_dict()}
@@ -277,11 +308,13 @@ class DQNContext(RLContext):
                     v_target = self.dqn_target(state_batch)[2]
                 target = reward_batch + self.discount_factor * v_target
                 loss = nn.MSELoss()(q, target)
-                self.summary_writer.add_scalar("loss/train", loss, self.epoch)
+                self.loss_accumulator.update_state(loss.detach().numpy())
                 self.optimizer.zero_grad()
                 loss.backward()
                 clip_grad_norm_(self.dqn_policy.parameters(), 1)
                 self.optimizer.step()
+            self.summary_writer.add_scalar("loss", self.loss_accumulator.get_value(), self.epoch)
+            self.loss_accumulator.reset()
             self.epoch += 1
         if self.epoch % self.target_network_update_rate == 0:
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
