@@ -169,6 +169,7 @@ class RLContext(ABC):
                  exploration_angle_sigma,
                  exploration_magnitude_sigma,
                  exploration_decay,
+                 exploration_duration,
                  **kwargs):
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -190,8 +191,13 @@ class RLContext(ABC):
         self.goal = None
         self.rng = np.random.default_rng()
         self.exploration_angle_sigma = exploration_angle_sigma
+        self.exploration_rot_axis = None
+        self.exploration_angle = 0
         self.exploration_magnitude_sigma = exploration_magnitude_sigma
+        self.exploration_magnitude = 0
         self.exploration_decay = exploration_decay
+        self.exploration_duration = exploration_duration
+        self.exploration_index = 0
 
     def __del__(self):
         self.summary_writer.flush()
@@ -255,17 +261,21 @@ class RLContext(ABC):
             self.episode_accumulators["reward/per_episode/goal"].update_state(goal)
         self._update_impl(state, reward)
         self.last_state_dict = state_dict
-        # do exploration by rotating the action vector a bit
-        rotation_axis = self.rng.multivariate_normal(np.zeros(3), np.identity(3))
-        rotation_axis[2] = - (rotation_axis[0] * self.action[0] + rotation_axis[1] * self.action[1]) / self.action[2]  # make it perpendicular to the action vector
-        rotation_axis /= np.linalg.norm(rotation_axis)
-        angle = np.deg2rad(self.rng.normal(scale=self.exploration_angle_sigma))
-        rotation_axis *= angle
+        # exploration
+        if self.exploration_index == 0:
+            self.exploration_rot_axis = self.rng.multivariate_normal(np.zeros(3), np.identity(3))
+            self.exploration_angle = np.deg2rad(self.rng.normal(scale=self.exploration_angle_sigma))
+            self.exploration_magnitude = self.rng.normal(scale=self.exploration_magnitude_sigma)
+        self.exploration_index = (self.exploration_index + 1) % self.exploration_duration
+        # rotate the action vector a bit
+        self.exploration_rot_axis[2] = - (self.exploration_rot_axis[0] * self.action[0] + self.exploration_rot_axis[1] * self.action[1]) / self.action[2]  # make it perpendicular to the action vector
+        self.exploration_rot_axis /= np.linalg.norm(self.exploration_rot_axis)
+        self.exploration_rot_axis *= self.exploration_angle
         self.exploration_angle_sigma *= self.exploration_decay
-        self.action = Rotation.from_rotvec(rotation_axis).apply(self.action)
+        self.action = Rotation.from_rotvec(self.exploration_rot_axis).apply(self.action)
         # change magnitude
         magnitude = np.linalg.norm(self.action)
-        self.action = self.action / magnitude * np.clip(magnitude + self.rng.normal(scale=self.exploration_magnitude_sigma), 0., self.max_force)
+        self.action = self.action / magnitude * np.clip(magnitude + self.exploration_magnitude, 0., self.max_force)
         self.exploration_magnitude_sigma *= self.exploration_decay
         self.summary_writer.add_scalar("exploration/angle_sigma", self.exploration_angle_sigma, self.epoch)
         self.summary_writer.add_scalar("exploration/magnitude_sigma", self.exploration_magnitude_sigma, self.epoch)
