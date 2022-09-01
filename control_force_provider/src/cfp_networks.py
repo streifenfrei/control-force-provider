@@ -58,10 +58,11 @@ class StateAugmenter:
 
 class RewardFunction:
 
-    def __init__(self, fmax, interval_duration, dc, mc, dg, rg):
+    def __init__(self, fmax, interval_duration, dc, mc, max_penalty, dg, rg):
         self.fmax = float(fmax)
         self.dc = float(dc)
         self.mc = float(mc)
+        self.max_penalty = max_penalty
         self.dg = float(dg)
         self.rg = float(rg)
         self.interval_duration = float(interval_duration)
@@ -73,7 +74,7 @@ class RewardFunction:
         distance_vectors = (np.array(state_dict["points_on_l2"][x:x + 3]) - np.array(state_dict["points_on_l1"][x:x + 3]) for x in range(0, len(state_dict["points_on_l1"]), 3))
         distance_to_goal = np.linalg.norm(goal - robot_position)
         motion_reward = (np.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration)
-        collision_penalty = - reduce(lambda x, y: x + y, ((self.dc / np.linalg.norm(o - robot_position[:3])) ** self.mc for o in distance_vectors))
+        collision_penalty = - np.maximum(reduce(lambda x, y: x + y, ((self.dc / (np.linalg.norm(o) + 1e-10)) ** self.mc for o in distance_vectors)), self.max_penalty)
         goal_reward = 0 if distance_to_goal > self.dg else self.rg
         total_reward = motion_reward + collision_penalty + goal_reward
         return total_reward, motion_reward, collision_penalty, goal_reward
