@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ros/ros.h>
 #include <yaml-cpp/yaml.h>
 
 #include <Eigen/Dense>
@@ -7,13 +8,18 @@
 
 namespace control_force_provider::backend {
 class Obstacle {
+ private:
+  ros::Time start_time;
+
  protected:
   const std::string id_;
   Eigen::Vector3d rcm_;
+  virtual Eigen::Vector4d getPositionAt(const ros::Time& ros_time) = 0;
 
  public:
-  Obstacle(const std::string& id) : id_(id){};
-  virtual Eigen::Vector4d getPosition() = 0;
+  Obstacle(const std::string& id) : start_time(ros::Time::now()), id_(id){};
+  void reset(double offset = 0);
+  Eigen::Vector4d getPosition();
   virtual ~Obstacle() = default;
 
   [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm_; }
@@ -31,7 +37,7 @@ class WaypointsObstacle : public Obstacle {
 
  public:
   WaypointsObstacle(const YAML::Node& config, const std::string& id);
-  Eigen::Vector4d getPosition() override;
+  Eigen::Vector4d getPositionAt(const ros::Time& ros_time) override;
   ~WaypointsObstacle() override = default;
 };
 }  // namespace control_force_provider::backend

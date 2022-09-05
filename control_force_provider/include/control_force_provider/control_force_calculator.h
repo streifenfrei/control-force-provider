@@ -5,6 +5,7 @@
 #include <torch/torch.h>
 
 #include <Eigen/Dense>
+#include <boost/random.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/thread.hpp>
 #include <boost/thread/future.hpp>
@@ -25,7 +26,7 @@ class ControlForceCalculator {
   Eigen::Vector3d rcm;
   Eigen::Vector4d goal;
   ros::Time start_time;
-  double elapsed_time;
+  double elapsed_time = 0;
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
   std::vector<Eigen::Vector4d> ob_positions;
   std::vector<Eigen::Vector4d> ob_velocities;
@@ -103,10 +104,34 @@ class StateProvider {
   [[nodiscard]] unsigned int getStateDim() const { return state_dim_; };
 };
 
+class EpisodeContext {
+ private:
+  Eigen::Vector4d start_;
+  Eigen::Vector4d goal_;
+  std::vector<boost::shared_ptr<Obstacle>>& obstacles_;
+  boost::random::mt19937 rng_;
+  Eigen::Vector3d start_bb_origin;
+  Eigen::Vector3d start_bb_dims;
+  Eigen::Vector3d goal_bb_origin;
+  Eigen::Vector3d goal_bb_dims;
+  double begin_max_offset_;
+
+ public:
+  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles_, const YAML::Node& config);
+  void generateEpisode();
+  void startEpisode();
+  const Eigen::Vector4d& getStart() const { return start_; };
+  const Eigen::Vector4d& getGoal() const { return goal_; };
+};
+
 class ReinforcementLearningAgent : public ControlForceCalculator {
  private:
+  const inline static double transition_smoothness = 0.001;
   const bool train;
   const ros::Duration interval_duration_;
+  const double goal_reached_threshold_distance_;
+  EpisodeContext episode_context_;
+  bool initializing_episode = true;
   Eigen::Vector4d current_force_;
   ros::Time last_calculation_;
   boost::future<Eigen::Vector4d> calculation_future_;

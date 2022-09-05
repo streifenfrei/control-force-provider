@@ -218,10 +218,35 @@ torch::Tensor StateProvider::createState() {
   return state;
 }
 
+EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles, const YAML::Node& config)
+    : obstacles_(obstacles), begin_max_offset_(utils::getConfigValue<double>(config, "begin_max_offset")[0]) {
+  std::vector<double> start_bb = utils::getConfigValue<double>(config, "start_bb");
+  std::vector<double> goal_bb = utils::getConfigValue<double>(config, "goal_bb");
+  start_bb_origin << start_bb[0], start_bb[1], start_bb[2];
+  start_bb_dims << start_bb[3], start_bb[4], start_bb[5];
+  goal_bb_origin << goal_bb[0], goal_bb[1], goal_bb[2];
+  goal_bb_dims << goal_bb[3], goal_bb[4], goal_bb[5];
+}
+
+void EpisodeContext::generateEpisode() {
+  for (size_t i = 0; i < 3; i++) {
+    start_[i] = boost::random::uniform_real_distribution<>(start_bb_origin[i], start_bb_origin[i] + start_bb_dims[i])(rng_);
+    ROS_WARN_STREAM(start_bb_origin[i] << ", " << start_bb_origin[i] + start_bb_dims[i] << " ->  " << start_[i]);
+    goal_[i] = boost::random::uniform_real_distribution<>(goal_bb_origin[i], goal_bb_origin[i] + goal_bb_dims[i])(rng_);
+  }
+}
+
+void EpisodeContext::startEpisode() {
+  double offset = boost::random::uniform_real_distribution<>(0, begin_max_offset_)(rng_);
+  for (auto& obstacle : obstacles_) obstacle->reset(offset);
+}
+
 ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config,
                                                        ros::NodeHandle& node_handle)
     : ControlForceCalculator(std::move(obstacles_)),
       interval_duration_(ros::Duration(utils::getConfigValue<double>(config, "interval_duration")[0] * 10e-4)),
+      goal_reached_threshold_distance_(utils::getConfigValue<double>(config, "goal_reached_threshold_distance")[0]),
+      episode_context_(obstacles, config),
       train(utils::getConfigValue<bool>(config, "train")[0]),
       output_dir(utils::getConfigValue<std::string>(config, "output_directory")[0]),
       last_calculation_(ros::Time::now()) {
@@ -231,6 +256,9 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared
   if (train) {
     training_service_client = boost::make_shared<ros::ServiceClient>(node_handle.serviceClient<control_force_provider_msgs::UpdateNetwork>("update_network"));
   }
+  episode_context_.generateEpisode();
+  goal = episode_context_.getStart();
+  initializing_episode = true;
 }
 
 Vector4d ReinforcementLearningAgent::getAction() {
@@ -274,7 +302,20 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
   ros::Time now = ros::Time::now();
   if (now - last_calculation_ > interval_duration_) {
     if (train) {
-      current_force_ = getAction();
+      Vector4d goal_vector = goal - ee_position;
+      goal_vector[3] = 0;
+      if (goal_vector.norm() < goal_reached_threshold_distance_) {
+        if (initializing_episode) {
+          episode_context_.startEpisode();
+          goal = episode_context_.getGoal();
+          initializing_episode = false;
+        } else {
+          episode_context_.generateEpisode();
+          goal = episode_context_.getStart();
+          initializing_episode = true;
+        }
+      }
+      current_force_ = initializing_episode ? goal_vector * transition_smoothness : getAction();
     } else {
       if (calculation_future_.wait_for(boost::chrono::seconds(0)) == boost::future_status::ready) {
         current_force_ = calculation_future_.get();

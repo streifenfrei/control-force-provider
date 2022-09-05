@@ -1,7 +1,5 @@
 #include "control_force_provider/obstacle.h"
 
-#include <ros/ros.h>
-
 #include <cmath>
 #include <vector>
 
@@ -10,6 +8,14 @@
 using namespace Eigen;
 using namespace control_force_provider::utils;
 namespace control_force_provider::backend {
+void Obstacle::reset(double offset) {
+  ros::Time now = ros::Time::now();
+  offset = std::min(offset, now.toSec());
+  start_time = ros::Time::now() - ros::Duration(offset);
+}
+
+Vector4d Obstacle::getPosition() { return getPositionAt(ros::Time(0) + (ros::Time::now() - start_time)); }
+
 WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string& id) : Obstacle(id), speed_(getConfigValue<double>(config, "speed")[0]) {
   std::vector<double> waypoints_raw = getConfigValue<double>(config, "waypoints");
   unsigned int waypoints_raw_length = waypoints_raw.size() - (waypoints_raw.size() % 3);
@@ -32,8 +38,8 @@ WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string
   rcm_ = {rcm_raw[0], rcm_raw[1], rcm_raw[2]};
 }
 
-Vector4d WaypointsObstacle::getPosition() {
-  double time = fmod(ros::Time::now().toSec(), total_duration_);
+Vector4d WaypointsObstacle::getPositionAt(const ros::Time& ros_time) {
+  double time = fmod(ros_time.toSec(), total_duration_);
   unsigned int segment;
   double duration_sum = 0;
   for (size_t i = 0; i < segments_durations_.size(); i++) {
