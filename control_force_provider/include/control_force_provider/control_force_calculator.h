@@ -110,10 +110,10 @@ class EpisodeContext {
   Eigen::Vector4d goal_;
   std::vector<boost::shared_ptr<Obstacle>>& obstacles_;
   boost::random::mt19937 rng_;
-  Eigen::Vector3d start_bb_origin;
-  Eigen::Vector3d start_bb_dims;
-  Eigen::Vector3d goal_bb_origin;
-  Eigen::Vector3d goal_bb_dims;
+  const Eigen::Vector3d start_bb_origin;
+  const Eigen::Vector3d start_bb_dims;
+  const Eigen::Vector3d goal_bb_origin;
+  const Eigen::Vector3d goal_bb_dims;
   double begin_max_offset_;
 
  public:

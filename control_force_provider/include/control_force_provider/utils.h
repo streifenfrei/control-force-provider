@@ -2,6 +2,8 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <Eigen/Dense>
+
 namespace control_force_provider {
 namespace exceptions {
 class Error : public std::runtime_error {
@@ -46,5 +48,6 @@ std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) 
 
 std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str);
 
+Eigen::Vector3d vectorFromList(const std::vector<double> &list, unsigned int start_index);
 }  // namespace utils
 }  // namespace control_force_provider

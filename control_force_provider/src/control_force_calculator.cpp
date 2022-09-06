@@ -219,14 +219,12 @@ torch::Tensor StateProvider::createState() {
 }
 
 EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles, const YAML::Node& config)
-    : obstacles_(obstacles), begin_max_offset_(utils::getConfigValue<double>(config, "begin_max_offset")[0]) {
-  std::vector<double> start_bb = utils::getConfigValue<double>(config, "start_bb");
-  std::vector<double> goal_bb = utils::getConfigValue<double>(config, "goal_bb");
-  start_bb_origin << start_bb[0], start_bb[1], start_bb[2];
-  start_bb_dims << start_bb[3], start_bb[4], start_bb[5];
-  goal_bb_origin << goal_bb[0], goal_bb[1], goal_bb[2];
-  goal_bb_dims << goal_bb[3], goal_bb[4], goal_bb[5];
-}
+    : obstacles_(obstacles),
+      begin_max_offset_(utils::getConfigValue<double>(config, "begin_max_offset")[0]),
+      start_bb_origin(utils::vectorFromList(utils::getConfigValue<double>(config, "start_bb"), 0)),
+      start_bb_dims(utils::vectorFromList(utils::getConfigValue<double>(config, "start_bb"), 3)),
+      goal_bb_origin(utils::vectorFromList(utils::getConfigValue<double>(config, "goal_bb"), 0)),
+      goal_bb_dims(utils::vectorFromList(utils::getConfigValue<double>(config, "goal_bb"), 3)) {}
 
 void EpisodeContext::generateEpisode() {
   for (size_t i = 0; i < 3; i++) {

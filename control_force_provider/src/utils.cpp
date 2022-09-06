@@ -16,6 +16,7 @@ PythonError::PythonError(const std::string &message) : Error(message, "PythonErr
 
 namespace utils {
 using namespace exceptions;
+using namespace Eigen;
 
 std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str) {
   boost::sregex_token_iterator iter(str.begin(), str.end(), boost::regex(regex), 0);
@@ -23,6 +24,10 @@ std::vector<std::string> regexFindAll(const std::string &regex, const std::strin
   std::vector<std::string> result;
   for (; iter != end; iter++) result.emplace_back(*iter);
   return result;
+}
+
+Vector3d vectorFromList(const std::vector<double> &list, unsigned int start_index) {
+  return Vector3d(list[start_index], list[start_index + 1], list[start_index + 2]);
 }
 }  // namespace utils
 }  // namespace control_force_provider
