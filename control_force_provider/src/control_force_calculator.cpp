@@ -170,7 +170,7 @@ StateProvider::StatePopulator StateProvider::createPopulatorFromString(const Con
     ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Unknown id in state pattern: " << id);
   }
   // parse arguments
-  for (auto& arg : utils::regex_findall(arg_regex, args)) {
+  for (auto& arg : utils::regexFindAll(arg_regex, args)) {
     std::string arg_id = arg.substr(0, 1);
     unsigned int value = std::stoi(arg.substr(1, arg.length() - 1));
     if (arg_id == "h")
@@ -184,7 +184,7 @@ StateProvider::StatePopulator StateProvider::createPopulatorFromString(const Con
 }
 
 StateProvider::StateProvider(const ControlForceCalculator& cfc, const std::string& state_pattern) {
-  for (auto& str : utils::regex_findall(pattern_regex, state_pattern)) {
+  for (auto& str : utils::regexFindAll(pattern_regex, state_pattern)) {
     state_populators_.push_back(createPopulatorFromString(cfc, str));
     state_dim_ += state_populators_.back().getDim();
   }

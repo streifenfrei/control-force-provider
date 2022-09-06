@@ -44,7 +44,7 @@ std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) 
   }
 }
 
-std::vector<std::string> regex_findall(const std::string &regex, const std::string &str);
+std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str);
 
 }  // namespace utils
 }  // namespace control_force_provider

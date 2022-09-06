@@ -17,7 +17,7 @@ PythonError::PythonError(const std::string &message) : Error(message, "PythonErr
 namespace utils {
 using namespace exceptions;
 
-std::vector<std::string> regex_findall(const std::string &regex, const std::string &str) {
+std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str) {
   boost::sregex_token_iterator iter(str.begin(), str.end(), boost::regex(regex), 0);
   boost::sregex_token_iterator end;
   std::vector<std::string> result;
