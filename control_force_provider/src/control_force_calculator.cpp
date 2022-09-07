@@ -14,7 +14,8 @@ namespace control_force_provider::backend {
 ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config)
     : obstacles(std::move(obstacles_)),
       workspace_bb_origin_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 0)),
-      workspace_bb_dims_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 3)) {
+      workspace_bb_dims_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 3)),
+      max_force_(utils::getConfigValue<double>(config, "max_force")[0]) {
   for (auto& obstacle : obstacles) {
     ob_rcms.push_back(obstacle->getRCM());
     ob_positions.emplace_back();

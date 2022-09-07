@@ -1,5 +1,7 @@
 #include "control_force_provider/visualizer.h"
 
+#include <eigen_conversions/eigen_msg.h>
+
 #include <Eigen/Dense>
 #include <boost/pointer_cast.hpp>
 
@@ -25,6 +27,12 @@ void Visualizer::callback(const ros::TimerEvent& event) {
   const Vector3d& robot_rcm = control_force_calculator_->rcm;
   visual_tools_.publishLine(robot_rcm, ee_position.head(3), rviz_visual_tools::PURPLE);
   visual_tools_.publishSphere(control_force_calculator_->goal.head(3), rviz_visual_tools::BLUE);
+  geometry_msgs::Point ee_position_msg;
+  tf::pointEigenToMsg(ee_position.head(3), ee_position_msg);
+  geometry_msgs::Point target_msg;
+  double scale = std::max(control_force_calculator_->ee_velocity.head(3).norm() / control_force_calculator_->max_force_ * 0.15, 0.05);
+  tf::pointEigenToMsg(ee_position.head(3) + control_force_calculator_->ee_velocity.head(3).normalized() * scale, target_msg);
+  visual_tools_.publishArrow(ee_position_msg, target_msg, rviz_visual_tools::TRANSLUCENT_LIGHT, rviz_visual_tools::SMALL);
   visual_tools_.publishWireframeCuboid(
       Isometry3d(Translation3d(control_force_calculator_->workspace_bb_origin_ + 0.5 * control_force_calculator_->workspace_bb_dims_)),
       control_force_calculator_->workspace_bb_dims_[0], control_force_calculator_->workspace_bb_dims_[1], control_force_calculator_->workspace_bb_dims_[2],

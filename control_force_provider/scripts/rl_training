@@ -33,6 +33,7 @@ def main():
     if config["algorithm"] != "rl" or not config["rl"]["train"]:
         return
     num_obstacles = len(config["obstacles"])
+    config["rl"]["max_force"] = config["max_force"]
     config = config["rl"]
     import cfp_networks
     state_augmenter = cfp_networks.StateAugmenter(config["state_pattern"], num_obstacles, **config["state_augmenter"])

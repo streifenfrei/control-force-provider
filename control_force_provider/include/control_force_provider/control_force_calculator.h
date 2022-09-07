@@ -24,6 +24,7 @@ class ControlForceCalculator {
  protected:
   const Eigen::Vector3d workspace_bb_origin_;
   const Eigen::Vector3d workspace_bb_dims_;
+  const double max_force_;
   Eigen::Vector4d ee_position;
   Eigen::Vector4d ee_velocity;
   Eigen::Vector3d rcm;
