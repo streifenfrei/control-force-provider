@@ -34,14 +34,11 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
   // load calculator
   std::string calculator_type = getConfigValue<std::string>(*config_, "algorithm")[0];
   if (calculator_type == "pfm") {
-    YAML::Node config_node = getConfigValue<YAML::Node>(*config_, "pfm")[0];
-    control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<PotentialFieldMethod>(obstacles, config_node));
+    control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<PotentialFieldMethod>(obstacles, *config_));
   } else if (calculator_type == "rl") {
-    YAML::Node config_node = getConfigValue<YAML::Node>(*config_, "rl")[0];
-    std::string rl_type = getConfigValue<std::string>(config_node, "type")[0];
+    std::string rl_type = getConfigValue<std::string>((*config_)["rl"], "type")[0];
     if (rl_type == "dqn") {
-      control_force_calculator_ =
-          boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<DeepQNetworkAgent>(obstacles, config_node, node_handle_));
+      control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<DeepQNetworkAgent>(obstacles, *config_, node_handle_));
     } else
       throw ConfigError("Unknown RL type '" + rl_type + "'");
   } else

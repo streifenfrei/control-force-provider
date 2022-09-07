@@ -17,10 +17,13 @@
 namespace control_force_provider::backend {
 class ControlForceCalculator {
  private:
+  const inline static double workspace_bb_stopping_strength = 0.001;
   bool rcm_available_ = false;
   bool goal_available_ = false;
 
  protected:
+  const Eigen::Vector3d workspace_bb_origin_;
+  const Eigen::Vector3d workspace_bb_dims_;
   Eigen::Vector4d ee_position;
   Eigen::Vector4d ee_velocity;
   Eigen::Vector3d rcm;
@@ -41,7 +44,7 @@ class ControlForceCalculator {
   void updateDistanceVectors();
 
  public:
-  explicit ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_);
+  explicit ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config);
   void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position_);
   virtual ~ControlForceCalculator() = default;
   [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm; }

@@ -5,26 +5,30 @@
 
 using namespace Eigen;
 namespace control_force_provider::backend {
-Visualizer::Visualizer(ros::NodeHandle &node_handle, boost::shared_ptr<ControlForceCalculator> control_force_calculator)
+Visualizer::Visualizer(ros::NodeHandle& node_handle, boost::shared_ptr<ControlForceCalculator> control_force_calculator)
     : node_handle_(node_handle),
       control_force_calculator_(control_force_calculator),
       visual_tools_("world", "/visualization_marker_array", node_handle),
       timer_(node_handle_.createTimer(ros::Duration(0.05), &Visualizer::callback, this)) {}
 
-void Visualizer::callback(const ros::TimerEvent &event) {
+void Visualizer::callback(const ros::TimerEvent& event) {
   visual_tools_.deleteAllMarkers();
   // obstacles
   for (size_t i = 0; i < control_force_calculator_->obstacles.size(); i++) {
-    Eigen::Vector3d obstacle_rcm = control_force_calculator_->ob_rcms[i];
-    Eigen::Vector4d obstacle_pos = control_force_calculator_->ob_positions[i];
+    Vector3d obstacle_rcm = control_force_calculator_->ob_rcms[i];
+    Vector4d obstacle_pos = control_force_calculator_->ob_positions[i];
     visual_tools_.publishSphere(obstacle_rcm, rviz_visual_tools::BROWN);
     visual_tools_.publishLine(obstacle_rcm, obstacle_pos.head(3), rviz_visual_tools::BROWN);
   }
   // control_force_calculator
-  const Eigen::Vector4d& ee_position = control_force_calculator_->ee_position;
-  const Eigen::Vector3d& robot_rcm = control_force_calculator_->rcm;
+  const Vector4d& ee_position = control_force_calculator_->ee_position;
+  const Vector3d& robot_rcm = control_force_calculator_->rcm;
   visual_tools_.publishLine(robot_rcm, ee_position.head(3), rviz_visual_tools::PURPLE);
   visual_tools_.publishSphere(control_force_calculator_->goal.head(3), rviz_visual_tools::BLUE);
+  visual_tools_.publishWireframeCuboid(
+      Isometry3d(Translation3d(control_force_calculator_->workspace_bb_origin_ + 0.5 * control_force_calculator_->workspace_bb_dims_)),
+      control_force_calculator_->workspace_bb_dims_[0], control_force_calculator_->workspace_bb_dims_[1], control_force_calculator_->workspace_bb_dims_[2],
+      rviz_visual_tools::DARK_GREY);
   boost::shared_ptr<PotentialFieldMethod> pfm = boost::dynamic_pointer_cast<PotentialFieldMethod>(control_force_calculator_);
   if (pfm) {
     for (size_t i = 0; i < control_force_calculator_->obstacles.size(); i++) {

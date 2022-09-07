@@ -11,7 +11,10 @@
 using namespace Eigen;
 namespace control_force_provider::backend {
 
-ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_) : obstacles(std::move(obstacles_)) {
+ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config)
+    : obstacles(std::move(obstacles_)),
+      workspace_bb_origin_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 0)),
+      workspace_bb_dims_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 3)) {
   for (auto& obstacle : obstacles) {
     ob_rcms.push_back(obstacle->getRCM());
     ob_positions.emplace_back();
@@ -21,7 +24,7 @@ ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obs
   }
 }
 
-void ControlForceCalculator::getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position_) {
+void ControlForceCalculator::getForce(Vector4d& force, const Vector4d& ee_position_) {
   if (!goal_available_) setGoal(ee_position);
   if (rcm_available_) {
     ee_velocity = ee_position_ - ee_position;
@@ -35,6 +38,25 @@ void ControlForceCalculator::getForce(Eigen::Vector4d& force, const Eigen::Vecto
     }
     updateDistanceVectors();
     getForceImpl(force);
+  }
+  // clip force to workspace bb
+  Vector4d next_pos = ee_position + force;
+  double distance_to_wall = INFINITY;
+  double next_distance_to_wall = INFINITY;
+  for (size_t i = 0; i < 3; i++) {
+    distance_to_wall = std::min(distance_to_wall, ee_position[i] - workspace_bb_origin_[i]);
+    distance_to_wall = std::min(distance_to_wall, workspace_bb_origin_[i] + workspace_bb_dims_[i] - ee_position[i]);
+    next_distance_to_wall = std::min(next_distance_to_wall, next_pos[i] - workspace_bb_origin_[i]);
+    next_distance_to_wall = std::min(next_distance_to_wall, workspace_bb_origin_[i] + workspace_bb_dims_[i] - next_pos[i]);
+    next_pos[i] = boost::algorithm::clamp(next_pos[i], workspace_bb_origin_[i], workspace_bb_origin_[i] + workspace_bb_dims_[i]);
+  }
+  if (next_distance_to_wall < distance_to_wall) {
+    force = next_pos - ee_position;
+    if (distance_to_wall > 0) {
+      double max_magnitude = distance_to_wall * workspace_bb_stopping_strength;
+      double magnitude = force.norm();
+      if (magnitude > max_magnitude) force = force / magnitude * max_magnitude;
+    }
   }
 }
 
@@ -84,13 +106,13 @@ void ControlForceCalculator::updateDistanceVectors() {
 }
 
 PotentialFieldMethod::PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config)
-    : ControlForceCalculator(std::move(obstacles_)),
-      attraction_strength_(utils::getConfigValue<double>(config, "attraction_strength")[0]),
-      attraction_distance_(utils::getConfigValue<double>(config, "attraction_distance")[0]),
-      repulsion_strength_(utils::getConfigValue<double>(config, "repulsion_strength")[0]),
-      repulsion_distance_(utils::getConfigValue<double>(config, "repulsion_distance")[0]),
-      z_translation_strength_(utils::getConfigValue<double>(config, "z_translation_strength")[0]),
-      min_rcm_distance_(utils::getConfigValue<double>(config, "min_rcm_distance")[0]) {
+    : ControlForceCalculator(std::move(obstacles_), config),
+      attraction_strength_(utils::getConfigValue<double>(config["pfm"], "attraction_strength")[0]),
+      attraction_distance_(utils::getConfigValue<double>(config["pfm"], "attraction_distance")[0]),
+      repulsion_strength_(utils::getConfigValue<double>(config["pfm"], "repulsion_strength")[0]),
+      repulsion_distance_(utils::getConfigValue<double>(config["pfm"], "repulsion_distance")[0]),
+      z_translation_strength_(utils::getConfigValue<double>(config["pfm"], "z_translation_strength")[0]),
+      min_rcm_distance_(utils::getConfigValue<double>(config["pfm"], "min_rcm_distance")[0]) {
   for (auto& obstacle : obstacles) {
     points_on_l1_.emplace_back();
     points_on_l2_.emplace_back();
@@ -195,7 +217,7 @@ void StateProvider::StatePopulator::populate(torch::Tensor& state, int& index) {
   for (size_t i = 0; i < vectors_.size(); i++) {
     const double* vector = vectors_[i];
     if (histories_.size() <= i) histories_.emplace_back();
-    std::deque<Eigen::VectorXd>& history = histories_[i];
+    std::deque<VectorXd>& history = histories_[i];
     if (stride_index_ == 0) {
       VectorXd eigen_vector(length_);
       for (size_t j = 0; j < length_; j++) eigen_vector[j] = vector[j];
@@ -229,7 +251,6 @@ EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacl
 void EpisodeContext::generateEpisode() {
   for (size_t i = 0; i < 3; i++) {
     start_[i] = boost::random::uniform_real_distribution<>(start_bb_origin[i], start_bb_origin[i] + start_bb_dims[i])(rng_);
-    ROS_WARN_STREAM(start_bb_origin[i] << ", " << start_bb_origin[i] + start_bb_dims[i] << " ->  " << start_[i]);
     goal_[i] = boost::random::uniform_real_distribution<>(goal_bb_origin[i], goal_bb_origin[i] + goal_bb_dims[i])(rng_);
   }
 }
@@ -241,14 +262,14 @@ void EpisodeContext::startEpisode() {
 
 ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config,
                                                        ros::NodeHandle& node_handle)
-    : ControlForceCalculator(std::move(obstacles_)),
-      interval_duration_(ros::Duration(utils::getConfigValue<double>(config, "interval_duration")[0] * 10e-4)),
-      goal_reached_threshold_distance_(utils::getConfigValue<double>(config, "goal_reached_threshold_distance")[0]),
-      episode_context_(obstacles, config),
-      train(utils::getConfigValue<bool>(config, "train")[0]),
-      output_dir(utils::getConfigValue<std::string>(config, "output_directory")[0]),
+    : ControlForceCalculator(std::move(obstacles_), config),
+      interval_duration_(ros::Duration(utils::getConfigValue<double>(config["rl"], "interval_duration")[0] * 10e-4)),
+      goal_reached_threshold_distance_(utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0]),
+      episode_context_(obstacles, config["rl"]),
+      train(utils::getConfigValue<bool>(config["rl"], "train")[0]),
+      output_dir(utils::getConfigValue<std::string>(config["rl"], "output_directory")[0]),
       last_calculation_(ros::Time::now()) {
-  state_provider = boost::make_shared<StateProvider>(*this, utils::getConfigValue<std::string>(config, "state_pattern")[0]);
+  state_provider = boost::make_shared<StateProvider>(*this, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0]);
   calculation_future_ = calculation_promise_.get_future();
   calculation_promise_.set_value(Vector4d::Zero());
   if (train) {
