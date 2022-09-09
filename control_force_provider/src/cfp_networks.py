@@ -275,7 +275,9 @@ class RLContext(ABC):
         self.action = Rotation.from_rotvec(self.exploration_rot_axis).apply(self.action)
         # change magnitude
         magnitude = np.linalg.norm(self.action)
-        self.action = self.action / magnitude * np.clip(magnitude + self.exploration_magnitude, 0., self.max_force)
+        clipped_magnitude = np.clip(magnitude + self.exploration_magnitude, 0., self.max_force)
+        self.summary_writer.add_scalar("magnitude", clipped_magnitude, self.epoch)
+        self.action = self.action / magnitude * clipped_magnitude
         self.exploration_magnitude_sigma *= self.exploration_decay
         self.summary_writer.add_scalar("exploration/angle_sigma", self.exploration_angle_sigma, self.epoch)
         self.summary_writer.add_scalar("exploration/magnitude_sigma", self.exploration_magnitude_sigma, self.epoch)
