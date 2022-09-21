@@ -14,6 +14,10 @@ class ConfigError : Error {
  public:
   explicit ConfigError(const std::string &message);
 };
+class CSVError : Error {
+ public:
+  explicit CSVError(const std::string &message);
+};
 class PythonError : Error {
  public:
   explicit PythonError(const std::string &message);
@@ -49,5 +53,9 @@ std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) 
 std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str);
 
 Eigen::Vector3d vectorFromList(const std::vector<double> &list, unsigned int start_index);
+
+std::string readFile(const std::string &file);
+
+void shortestLine(const Eigen::Vector3d &a1, const Eigen::Vector3d &b1, const Eigen::Vector3d &a2, const Eigen::Vector3d &b2, double &t, double &s);
 }  // namespace utils
 }  // namespace control_force_provider

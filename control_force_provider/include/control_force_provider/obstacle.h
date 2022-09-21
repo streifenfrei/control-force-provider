@@ -4,6 +4,8 @@
 #include <yaml-cpp/yaml.h>
 
 #include <Eigen/Dense>
+#include <boost/random.hpp>
+#include <boost/shared_ptr.hpp>
 #include <vector>
 
 namespace control_force_provider::backend {
@@ -35,9 +37,40 @@ class WaypointsObstacle : public Obstacle {
   double total_duration_;
   double speed_;  // m/s
 
+ protected:
+  Eigen::Vector4d getPositionAt(const ros::Time& ros_time) override;
+
  public:
   WaypointsObstacle(const YAML::Node& config, const std::string& id);
-  Eigen::Vector4d getPositionAt(const ros::Time& ros_time) override;
   ~WaypointsObstacle() override = default;
+};
+
+class FramesObstacle : public Obstacle {
+ private:
+  const static inline unsigned int rcm_estimation_sample_num = 100;
+  const static inline double rcm_estimation_max_var = 1e-6;
+  std::map<double, Eigen::Affine3d> frames_;
+  std::map<double, Eigen::Affine3d>::iterator iter_;
+  boost::random::mt19937 rng_;
+
+ protected:
+  Eigen::Vector4d getPositionAt(const ros::Time& ros_time) override;
+
+ public:
+  explicit FramesObstacle(const std::string& id);
+  void setFrames(std::map<double, Eigen::Affine3d> frames);
+  ~FramesObstacle() override = default;
+};
+
+class ObstacleLoader {
+ private:
+  const static inline char delimiter = ',';
+  std::vector<boost::shared_ptr<FramesObstacle>> obstacles_;
+  std::vector<std::string> csv_files_;
+  std::vector<std::map<double, Eigen::Affine3d>> cached_frames_;
+  std::vector<std::map<double, Eigen::Affine3d>> parseFile(const std::string& file);
+
+ public:
+  ObstacleLoader(std::vector<boost::shared_ptr<FramesObstacle>> obstacles, const std::string& path);
 };
 }  // namespace control_force_provider::backend

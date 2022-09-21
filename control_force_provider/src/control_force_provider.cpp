@@ -2,6 +2,7 @@
 
 #include <eigen_conversions/eigen_msg.h>
 
+#include <boost/optional.hpp>
 #include <iostream>
 
 #include "control_force_provider/utils.h"
@@ -20,25 +21,37 @@ void ControlForceProvider::loadConfig() {
 ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider") {
   loadConfig();
   YAML::Node obstacle_configs = getConfigValue<YAML::Node>(*config_, "obstacles")[0];
-  std::vector<boost::shared_ptr<Obstacle>> obstacles;
   // load obstacles
+  std::vector<boost::shared_ptr<Obstacle>> obstacles;
+  std::vector<boost::shared_ptr<FramesObstacle>> frames_obstacles;
+  boost::optional<ObstacleLoader> obstacle_loader;
+  std::string data_path;
   for (YAML::const_iterator it = obstacle_configs.begin(); it != obstacle_configs.end(); it++) {
-    std::string ob_id = it->first.as<std::string>();
-    const YAML::Node& ob_config = it->second;
-    std::string ob_type = getConfigValue<std::string>(ob_config, "type")[0];
-    if (ob_type == "waypoints") {
-      obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, ob_id)));
-    } else
-      throw ConfigError("Unknown obstacle type '" + ob_type + "'");
+    std::string id = it->first.as<std::string>();
+    if (id == "data") {
+      data_path = it->second.as<std::string>();
+    } else {
+      const YAML::Node& ob_config = it->second;
+      std::string ob_type = getConfigValue<std::string>(ob_config, "type")[0];
+      if (ob_type == "waypoints") {
+        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, id)));
+      } else if (ob_type == "csv") {
+        boost::shared_ptr<FramesObstacle> obstacle = boost::make_shared<FramesObstacle>(id);
+        obstacles.push_back(boost::static_pointer_cast<Obstacle>(obstacle));
+        frames_obstacles.push_back(obstacle);
+      } else
+        throw ConfigError("Unknown obstacle type '" + ob_type + "'");
+    }
   }
   // load calculator
   std::string calculator_type = getConfigValue<std::string>(*config_, "algorithm")[0];
   if (calculator_type == "pfm") {
-    control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<PotentialFieldMethod>(obstacles, *config_));
+    control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<PotentialFieldMethod>(obstacles, *config_, data_path));
   } else if (calculator_type == "rl") {
     std::string rl_type = getConfigValue<std::string>((*config_)["rl"], "type")[0];
     if (rl_type == "dqn") {
-      control_force_calculator_ = boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<DeepQNetworkAgent>(obstacles, *config_, node_handle_));
+      control_force_calculator_ =
+          boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<DeepQNetworkAgent>(obstacles, *config_, node_handle_, data_path));
     } else
       throw ConfigError("Unknown RL type '" + rl_type + "'");
   } else

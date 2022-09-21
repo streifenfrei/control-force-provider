@@ -11,18 +11,22 @@
 using namespace Eigen;
 namespace control_force_provider::backend {
 
-ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config)
+ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path)
     : obstacles(std::move(obstacles_)),
       workspace_bb_origin_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 0)),
       workspace_bb_dims_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 3)),
       max_force_(utils::getConfigValue<double>(config, "max_force")[0]) {
+  std::vector<boost::shared_ptr<FramesObstacle>> frames_obstacles;
   for (auto& obstacle : obstacles) {
     ob_rcms.push_back(obstacle->getRCM());
     ob_positions.emplace_back();
     ob_velocities.emplace_back();
     points_on_l1_.emplace_back();
     points_on_l2_.emplace_back();
+    boost::shared_ptr<FramesObstacle> frames_obstacle = boost::dynamic_pointer_cast<FramesObstacle>(obstacle);
+    if (frames_obstacle) frames_obstacles.push_back(frames_obstacle);
   }
+  obstacle_loader_ = boost::make_shared<ObstacleLoader>(frames_obstacles, data_path);
 }
 
 void ControlForceCalculator::getForce(Vector4d& force, const Vector4d& ee_position_) {
@@ -67,38 +71,10 @@ void ControlForceCalculator::updateDistanceVectors() {
   const Vector3d& a1 = rcm;
   Vector3d b1 = ee_position3d - a1;
   for (size_t i = 0; i < obstacles.size(); i++) {
-    Vector3d ob_position = ob_positions[i].head(3);
-    //  for the vector between "robot" and "obstacle" we take the shortest line between both tools:
-    //  tool1:                                                    l1 = a1 + t*b1
-    //  tool2:                                                    l2 = a2 + s*b2
+    double t, s = 0;
     const Vector3d& a2 = ob_rcms[i];
-    Vector3d b2 = ob_position - a2;
-    //  general vector between l1 and l2:                         v = a2 - a1 + sb2 - t*b1 = a' + s*b2 - t*b1
-    Vector3d a_diff = a2 - a1;
-    //  the shortest line is perpendicular to both tools (v•b1 = v•b2 = 0). We want to solve this LEQ for t and s:
-    //                b1•a' + s*b1•b2 - t*b1•b1 = 0
-    //                b2•a' + s*b2•b2 - t*b2•b1 = 0
-    //  substitute e1 = b1•b2, e2 = b2•b2 and e3 = b1•b1
-    double e1 = b1.dot(b2);
-    double e2 = b2.dot(b2);
-    double e3 = b1.dot(b1);
-    //                b1•a' + s*e1 - t*e3 = 0                                 |* e2
-    //                b2•a' + s*e2 - t*e1 = 0                                 |* e1
-    //                ————————————————————————————
-    //                b1•a'*e2 + s*e1*e2 - t*e2*e3 = 0                        -
-    //                b2•a'*e1 + s*e1*e2 - t*e1*e1 = 0
-    //                ————————————————————————————————
-    //                b1•a'*e2 - t*e2*e3 - b2•a'*e1 + t*e1*e1 = 0             |+ b2•a'*e1, - b1•a'*e2
-    //                ———————————————————————————————————————————
-    //                t*(e1*e1 - e2*e3) = a'•(b2*e1 - b1*e2)                  |: (e1*e1 - b1•b1*e2)
-    //                ——————————————————————————————————————
-    //                t = a'•(b2*e1 - b1*e2) / (e1*e1 - e2*e3)
-    double t = a_diff.dot(b2 * e1 - b1 * e2) / (e1 * e1 - e2 * e3);
-    //  use the first equation to get s:
-    //                s*e1 = t*e3 - b1•a'                                     |: e1
-    //                ———————————————————
-    //                s = (t*e3 - b1•a') / e1
-    double s = (t * e3 - b1.dot(a_diff)) / e1;
+    Vector3d b2 = ob_positions[i].head(3) - a2;
+    utils::shortestLine(a1, b1, a2, b2, t, s);
     t = boost::algorithm::clamp(t, 0, 1);
     s = boost::algorithm::clamp(s, 0, 1);
     points_on_l1_[i] = (a1 + t * b1);
@@ -106,8 +82,8 @@ void ControlForceCalculator::updateDistanceVectors() {
   }
 }
 
-PotentialFieldMethod::PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config)
-    : ControlForceCalculator(std::move(obstacles_), config),
+PotentialFieldMethod::PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path)
+    : ControlForceCalculator(std::move(obstacles_), config, data_path),
       attraction_strength_(utils::getConfigValue<double>(config["pfm"], "attraction_strength")[0]),
       attraction_distance_(utils::getConfigValue<double>(config["pfm"], "attraction_distance")[0]),
       repulsion_strength_(utils::getConfigValue<double>(config["pfm"], "repulsion_strength")[0]),
@@ -262,8 +238,8 @@ void EpisodeContext::startEpisode() {
 }
 
 ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config,
-                                                       ros::NodeHandle& node_handle)
-    : ControlForceCalculator(std::move(obstacles_), config),
+                                                       ros::NodeHandle& node_handle, const std::string& data_path)
+    : ControlForceCalculator(std::move(obstacles_), config, data_path),
       interval_duration_(ros::Duration(utils::getConfigValue<double>(config["rl"], "interval_duration")[0] * 10e-4)),
       goal_reached_threshold_distance_(utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0]),
       episode_context_(obstacles, config["rl"]),
@@ -358,7 +334,8 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
   force = current_force_;
 }
 
-DeepQNetworkAgent::DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle)
+DeepQNetworkAgent::DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle,
+                                     const std::string& data_path)
     : ReinforcementLearningAgent(std::move(obstacles_), config, node_handle) {}
 
 torch::Tensor DeepQNetworkAgent::getActionInference(torch::Tensor& state) {}

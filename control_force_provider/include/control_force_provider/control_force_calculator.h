@@ -32,6 +32,7 @@ class ControlForceCalculator {
   ros::Time start_time;
   double elapsed_time = 0;
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
+  boost::shared_ptr<ObstacleLoader> obstacle_loader_;
   std::vector<Eigen::Vector4d> ob_positions;
   std::vector<Eigen::Vector4d> ob_velocities;
   std::vector<Eigen::Vector3d> ob_rcms;
@@ -45,7 +46,7 @@ class ControlForceCalculator {
   void updateDistanceVectors();
 
  public:
-  explicit ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config);
+  ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path);
   void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position_);
   virtual ~ControlForceCalculator() = default;
   [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm; }
@@ -75,7 +76,7 @@ class PotentialFieldMethod : public ControlForceCalculator {
   void getForceImpl(Eigen::Vector4d& force) override;
 
  public:
-  PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config);
+  PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path = "");
   ~PotentialFieldMethod() override = default;
 };
 
@@ -153,7 +154,8 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   void getForceImpl(Eigen::Vector4d& force) override;
 
  public:
-  ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle);
+  ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle,
+                             const std::string& data_path = "");
   ~ReinforcementLearningAgent() override = default;
 };
 
@@ -162,6 +164,7 @@ class DeepQNetworkAgent : public ReinforcementLearningAgent {
   torch::Tensor getActionInference(torch::Tensor& state) override;
 
  public:
-  DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle);
+  DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle,
+                    const std::string& data_path = "");
 };
 }  // namespace control_force_provider::backend
