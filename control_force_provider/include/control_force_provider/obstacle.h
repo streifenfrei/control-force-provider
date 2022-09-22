@@ -19,12 +19,13 @@ class Obstacle {
   virtual Eigen::Vector4d getPositionAt(const ros::Time& ros_time) = 0;
 
  public:
-  Obstacle(const std::string& id) : start_time(ros::Time::now()), id_(id){};
+  Obstacle(const std::string& id) : start_time(ros::Time::now()), id_(id), rcm_(Eigen::Vector3d::Zero()){};
   void reset(double offset = 0);
   Eigen::Vector4d getPosition();
   virtual ~Obstacle() = default;
 
   [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm_; }
+  void setRCM(Eigen::Vector3d rcm) { rcm_ = rcm; }
 };
 
 class WaypointsObstacle : public Obstacle {
@@ -47,11 +48,8 @@ class WaypointsObstacle : public Obstacle {
 
 class FramesObstacle : public Obstacle {
  private:
-  const static inline unsigned int rcm_estimation_sample_num = 100;
-  const static inline double rcm_estimation_max_var = 1e-6;
   std::map<double, Eigen::Affine3d> frames_;
   std::map<double, Eigen::Affine3d>::iterator iter_;
-  boost::random::mt19937 rng_;
 
  protected:
   Eigen::Vector4d getPositionAt(const ros::Time& ros_time) override;
@@ -65,12 +63,18 @@ class FramesObstacle : public Obstacle {
 class ObstacleLoader {
  private:
   const static inline char delimiter = ',';
+  const static inline unsigned int rcm_estimation_sample_num = 100;
+  const static inline double rcm_estimation_max_var = 1e-6;
   std::vector<boost::shared_ptr<FramesObstacle>> obstacles_;
   std::vector<std::string> csv_files_;
   std::vector<std::map<double, Eigen::Affine3d>> cached_frames_;
+  int reference_obstacle_;
+  boost::random::mt19937 rng_;
   std::vector<std::map<double, Eigen::Affine3d>> parseFile(const std::string& file);
+  Eigen::Vector3d estimateRCM(const std::map<double, Eigen::Affine3d>& frames);
+  void updateObstacles(std::vector<std::map<double, Eigen::Affine3d>> frames);
 
  public:
-  ObstacleLoader(std::vector<boost::shared_ptr<FramesObstacle>> obstacles, const std::string& path);
+  ObstacleLoader(std::vector<boost::shared_ptr<FramesObstacle>> obstacles, const std::string& path, int reference_obstacle = -1);
 };
 }  // namespace control_force_provider::backend

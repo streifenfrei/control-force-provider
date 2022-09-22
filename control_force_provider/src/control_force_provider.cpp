@@ -23,8 +23,6 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
   YAML::Node obstacle_configs = getConfigValue<YAML::Node>(*config_, "obstacles")[0];
   // load obstacles
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
-  std::vector<boost::shared_ptr<FramesObstacle>> frames_obstacles;
-  boost::optional<ObstacleLoader> obstacle_loader;
   std::string data_path;
   for (YAML::const_iterator it = obstacle_configs.begin(); it != obstacle_configs.end(); it++) {
     std::string id = it->first.as<std::string>();
@@ -37,8 +35,8 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
         obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, id)));
       } else if (ob_type == "csv") {
         boost::shared_ptr<FramesObstacle> obstacle = boost::make_shared<FramesObstacle>(id);
+        if (ob_config["rcm"].IsDefined()) obstacle->setRCM(utils::vectorFromList(utils::getConfigValue<double>(ob_config, "rcm"), 0));
         obstacles.push_back(boost::static_pointer_cast<Obstacle>(obstacle));
-        frames_obstacles.push_back(obstacle);
       } else
         throw ConfigError("Unknown obstacle type '" + ob_type + "'");
     }

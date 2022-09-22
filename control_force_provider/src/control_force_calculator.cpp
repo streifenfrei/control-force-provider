@@ -17,6 +17,7 @@ ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obs
       workspace_bb_dims_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 3)),
       max_force_(utils::getConfigValue<double>(config, "max_force")[0]) {
   std::vector<boost::shared_ptr<FramesObstacle>> frames_obstacles;
+  int reference_obstacle = -1;
   for (auto& obstacle : obstacles) {
     ob_rcms.push_back(obstacle->getRCM());
     ob_positions.emplace_back();
@@ -24,9 +25,17 @@ ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obs
     points_on_l1_.emplace_back();
     points_on_l2_.emplace_back();
     boost::shared_ptr<FramesObstacle> frames_obstacle = boost::dynamic_pointer_cast<FramesObstacle>(obstacle);
-    if (frames_obstacle) frames_obstacles.push_back(frames_obstacle);
+    if (frames_obstacle) {
+      if (frames_obstacle->getRCM() != Vector3d::Zero()) {
+        if (reference_obstacle == -1)
+          reference_obstacle = frames_obstacles.size();
+        else
+          throw utils::ConfigError("Found more than one reference RCM for the obstacles");
+      }
+      frames_obstacles.push_back(frames_obstacle);
+    }
   }
-  obstacle_loader_ = boost::make_shared<ObstacleLoader>(frames_obstacles, data_path);
+  obstacle_loader_ = boost::make_shared<ObstacleLoader>(frames_obstacles, data_path, reference_obstacle);
 }
 
 void ControlForceCalculator::getForce(Vector4d& force, const Vector4d& ee_position_) {

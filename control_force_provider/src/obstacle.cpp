@@ -37,7 +37,7 @@ WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string
     total_duration_ += duration;
   }
   std::vector<double> rcm_raw = getConfigValue<double>(config, "rcm");
-  rcm_ = {rcm_raw[0], rcm_raw[1], rcm_raw[2]};
+  setRCM({rcm_raw[0], rcm_raw[1], rcm_raw[2]});
 }
 
 Vector4d WaypointsObstacle::getPositionAt(const ros::Time& ros_time) {
@@ -60,47 +60,7 @@ Vector4d WaypointsObstacle::getPositionAt(const ros::Time& ros_time) {
 
 FramesObstacle::FramesObstacle(const std::string& id) : Obstacle(id) { iter_ = frames_.begin(); }
 
-void FramesObstacle::setFrames(std::map<double, Affine3d> frames) {
-  frames_ = std::move(frames);
-  // estimate RCM
-  boost::random::uniform_int_distribution<> index_sampler(0, frames_.size() - 1);
-  std::vector<int> indices;
-  for (size_t i = 0; i < rcm_estimation_sample_num; i++) indices.push_back(index_sampler(rng_));
-  std::sort(indices.begin(), indices.end(), std::less<>());
-  std::vector<std::reference_wrapper<Affine3d>> poses;
-  int index = 0;
-  auto index_iter = indices.begin();
-  for (auto& frame : frames_) {
-    if (*index_iter == index) poses.emplace_back(frame.second);
-    while (*index_iter <= index) index_iter++;
-    index++;
-  }
-  std::vector<Vector3d> points;
-  for (auto poses_iter = poses.begin(); poses_iter != poses.end(); poses_iter++) {
-    const Affine3d& p1 = *poses_iter;
-    for (auto poses_iter2 = poses_iter; poses_iter2 != poses.end(); poses_iter2++) {
-      if (poses_iter2 != poses_iter) {
-        const Affine3d& p2 = *poses_iter2;
-        double t, s = 0;
-        const Vector3d& a1 = p1.translation();
-        Vector3d b1 = (p1 * Translation3d(0, 0, 1)).translation() - a1;
-        const Vector3d& a2 = p2.translation();
-        Vector3d b2 = (p2 * Translation3d(0, 0, 1)).translation() - a2;
-        utils::shortestLine(a1, b1, a2, b2, t, s);
-        points.emplace_back(a1 + t * b1);
-        points.emplace_back(a2 + s * b2);
-      }
-    }
-  }
-  rcm_ = Vector3d::Zero();
-  for (Vector3d& point : points) rcm_ += point;
-  rcm_ /= points.size();
-  Vector3d var = Vector3d::Zero();
-  for (Vector3d& point : points) var += point - rcm_;
-  var /= points.size();
-  if (std::abs(var[0]) > rcm_estimation_max_var || std::abs(var[1]) > rcm_estimation_max_var || std::abs(var[2]) > rcm_estimation_max_var)
-    ROS_WARN_STREAM_NAMED("control_force_provider", "Point distribution for RCM estimation exceeds maximum variance.");
-}
+void FramesObstacle::setFrames(std::map<double, Affine3d> frames) { frames_ = std::move(frames); }
 
 Vector4d FramesObstacle::getPositionAt(const ros::Time& ros_time) {
   double seconds = ros_time.toSec();
@@ -130,12 +90,13 @@ Vector4d FramesObstacle::getPositionAt(const ros::Time& ros_time) {
   } while (iter_ != start_iter);
 }
 
-ObstacleLoader::ObstacleLoader(std::vector<boost::shared_ptr<FramesObstacle>> obstacles, const std::string& path) : obstacles_(std::move(obstacles)) {
+ObstacleLoader::ObstacleLoader(std::vector<boost::shared_ptr<FramesObstacle>> obstacles, const std::string& path, int reference_obstacle)
+    : obstacles_(std::move(obstacles)), reference_obstacle_(reference_obstacle) {
   if (obstacles_.empty()) return;
   if (std::filesystem::is_regular_file(path)) csv_files_.push_back(path);
   if (csv_files_.empty()) throw CSVError("No .csv files found in " + path);
   std::vector<std::map<double, Affine3d>> frames = parseFile(csv_files_[0]);
-  for (size_t i = 0; i < obstacles_.size(); i++) obstacles_[i]->setFrames(std::move(frames[i]));
+  updateObstacles(std::move(frames));
 }
 
 std::vector<std::map<double, Affine3d>> ObstacleLoader::parseFile(const std::string& file) {
@@ -158,7 +119,6 @@ std::vector<std::map<double, Affine3d>> ObstacleLoader::parseFile(const std::str
       Quaterniond rotation(std::stod(tokens[j + 4]), std::stod(tokens[j + 1]), std::stod(tokens[j + 2]), std::stod(tokens[j + 3]));
       Vector3d position(std::stod(tokens[j + 5]), std::stod(tokens[j + 6]), std::stod(tokens[j + 7]));
       position *= 1e-3;
-      position[2] += 2;
       out[i][time] = Translation3d(position) * rotation;
     }
     line++;
@@ -166,5 +126,64 @@ std::vector<std::map<double, Affine3d>> ObstacleLoader::parseFile(const std::str
   if (out[0].empty()) throw CSVError("Could not parse " + file);
   ROS_INFO_STREAM_NAMED("control_force_provider/obstacle_loader", "Loaded CSV: " << file);
   return out;
+}
+
+Vector3d ObstacleLoader::estimateRCM(const std::map<double, Eigen::Affine3d>& frames) {
+  boost::random::uniform_int_distribution<> index_sampler(0, frames.size() - 1);
+  std::vector<int> indices;
+  for (size_t i = 0; i < rcm_estimation_sample_num; i++) indices.push_back(index_sampler(rng_));
+  std::sort(indices.begin(), indices.end(), std::less<>());
+  std::vector<Affine3d> poses;
+  int index = 0;
+  auto index_iter = indices.begin();
+  for (auto& frame : frames) {
+    if (*index_iter == index) poses.emplace_back(frame.second);
+    while (*index_iter <= index) index_iter++;
+    index++;
+  }
+  std::vector<Vector3d> points;
+  for (auto poses_iter = poses.begin(); poses_iter != poses.end(); poses_iter++) {
+    const Affine3d& p1 = *poses_iter;
+    for (auto poses_iter2 = poses_iter; poses_iter2 != poses.end(); poses_iter2++) {
+      if (poses_iter2 != poses_iter) {
+        const Affine3d& p2 = *poses_iter2;
+        double t, s = 0;
+        const Vector3d& a1 = p1.translation();
+        Vector3d b1 = (p1 * Translation3d(0, 0, 1)).translation() - a1;
+        const Vector3d& a2 = p2.translation();
+        Vector3d b2 = (p2 * Translation3d(0, 0, 1)).translation() - a2;
+        utils::shortestLine(a1, b1, a2, b2, t, s);
+        points.emplace_back(a1 + t * b1);
+        points.emplace_back(a2 + s * b2);
+      }
+    }
+  }
+  Vector3d rcm = Vector3d::Zero();
+  for (Vector3d& point : points) rcm += point;
+  rcm /= points.size();
+  Vector3d var = Vector3d::Zero();
+  for (Vector3d& point : points) var += point - rcm;
+  var /= points.size();
+  if (std::abs(var[0]) > rcm_estimation_max_var || std::abs(var[1]) > rcm_estimation_max_var || std::abs(var[2]) > rcm_estimation_max_var)
+    ROS_WARN_STREAM_NAMED("control_force_provider", "Point distribution for RCM estimation exceeds maximum variance.");
+  return rcm;
+}
+
+void ObstacleLoader::updateObstacles(std::vector<std::map<double, Affine3d>> frames) {
+  Vector3d reference_rcm, rcm_translation;
+  bool translate = reference_obstacle_ >= 0;
+  if (translate) {
+    reference_rcm = estimateRCM(frames[reference_obstacle_]);
+    rcm_translation = obstacles_[reference_obstacle_]->getRCM() - reference_rcm;
+  }
+  for (size_t i = 0; i < frames.size(); i++) {
+    Vector3d rcm = i == reference_obstacle_ ? reference_rcm : estimateRCM(frames[i]);
+    if (translate) {
+      for (auto& frame : frames[i]) frame.second.pretranslate(rcm_translation);
+      rcm += rcm_translation;
+    }
+    obstacles_[i]->setFrames(std::move(frames[i]));
+    obstacles_[i]->setRCM(rcm);
+  }
 }
 }  // namespace control_force_provider::backend
