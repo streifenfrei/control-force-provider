@@ -1,0 +1,75 @@
+#! /usr/bin/env python
+
+import os
+import csv
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+from argparse import ArgumentParser
+
+
+# MODIFY THIS FUNCTION ACCORDING TO THE STRUCTURE OF THE DATA SET
+def get_parameters(file):
+    return {"ids": ["Grasper1", "Grasper2"],
+            "rotation": (0, -1, 0, 0)}
+
+
+obstacle_fields = ["name", "rot_x", "rot_y", "rot_z", "rot_w", "pos_x", "pos_y", "pos_z", "visible"]
+
+
+def get_field_names(num_obs):
+    field_names = ["time"]
+    for i in range(num_obs):
+        field_names.extend((f"{x}{i}" for x in obstacle_fields))
+    return field_names
+
+
+def main():
+    arg_parser = ArgumentParser()
+    arg_parser.add_argument("--path", "-p", type=str, required=True)
+    arg_parser.add_argument("--out", "-o", type=str, required=True)
+    args = arg_parser.parse_args()
+    path = args.path
+    out = args.out
+    if not os.path.isdir(out):
+        print(f"Invalid output directory: {out}")
+        exit(-1)
+    files = []
+    if os.path.isfile(path) and path[-4:] == ".csv":
+        files.append(path)
+    elif os.path.isdir(path):
+        for root, _, files in os.walk(path):
+            for file in files:
+                if file[-4:] == ".csv":
+                    files.append(os.path.join(root, file))
+    else:
+        print(f"Invalid path: {path}")
+        exit(-1)
+    # process
+    for i, file in enumerate(files):
+        params = get_parameters(file)
+        with open(file, "r") as i_file, open(os.path.join(out, f"{i}.csv", ), "w") as o_file:
+            reader = csv.DictReader(i_file, fieldnames=get_field_names(6))
+            writer = csv.DictWriter(o_file, fieldnames=get_field_names(len(params["ids"])))
+            for row in reader:
+                out_dict = {"time": row["time"]}
+                for key in row:
+                    if key is None: continue
+                    field, j_in = key[:-1], key[-1]
+                    if field == "name" and row[key] in params["ids"]:
+                        j_out = params["ids"].index(row[key])
+                        out_dict[f"name{j_out}"] = row[key]
+                        for ob_field in obstacle_fields[1:]:
+                            out_dict[f"{ob_field}{j_out}"] = row[f"{ob_field}{j_in}"]
+                        # rotate around the origin
+                        position = np.array((float(out_dict[f"pos_x{j_out}"]), float(out_dict[f"pos_y{j_out}"]), float(out_dict[f"pos_z{j_out}"])))
+                        rotation = R.from_quat([out_dict[f"rot_x{j_out}"], out_dict[f"rot_y{j_out}"], out_dict[f"rot_z{j_out}"], out_dict[f"rot_w{j_out}"]])
+                        ext_rotation = R.from_quat(params["rotation"])
+                        position = ext_rotation.apply(position)
+                        rotation = ext_rotation * rotation
+                        out_dict[f"pos_x{j_out}"], out_dict[f"pos_y{j_out}"], out_dict[f"pos_z{j_out}"] = position
+                        out_dict[f"rot_x{j_out}"], out_dict[f"rot_y{j_out}"], out_dict[f"rot_z{j_out}"], out_dict[f"rot_w{j_out}"] = rotation.as_quat()
+                writer.writerow(out_dict)
+
+
+if __name__ == '__main__':
+    main()
