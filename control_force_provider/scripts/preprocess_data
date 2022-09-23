@@ -48,7 +48,7 @@ def main():
     for i, file in enumerate(files):
         params = get_parameters(file)
         with open(file, "r") as i_file, open(os.path.join(out, f"{i}.csv", ), "w") as o_file:
-            reader = csv.DictReader(i_file, fieldnames=get_field_names(6))
+            reader = csv.DictReader(i_file, fieldnames=get_field_names(10))
             writer = csv.DictWriter(o_file, fieldnames=get_field_names(len(params["ids"])))
             for row in reader:
                 out_dict = {"time": row["time"]}
