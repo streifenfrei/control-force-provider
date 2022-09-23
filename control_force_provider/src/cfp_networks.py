@@ -20,8 +20,10 @@ Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'
 class StateAugmenter:
     class _StatePartID(str, Enum):
         robot_position = "ree"
+        robot_velocity = "rve"
         robot_rcm = "rpp"
         obstacle_position = "oee"
+        obstacle_velocity = "ove"
         obstacle_rcm = "opp"
         goal = "gol"
         time = "tim"
