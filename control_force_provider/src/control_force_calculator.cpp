@@ -226,8 +226,10 @@ torch::Tensor StateProvider::createState() {
   return state;
 }
 
-EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles, const YAML::Node& config)
+EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles, boost::shared_ptr<ObstacleLoader>& obstacle_loader,
+                               const YAML::Node& config)
     : obstacles_(obstacles),
+      obstacle_loader_(obstacle_loader),
       begin_max_offset_(utils::getConfigValue<double>(config, "begin_max_offset")[0]),
       start_bb_origin(utils::vectorFromList(utils::getConfigValue<double>(config, "start_bb"), 0)),
       start_bb_dims(utils::vectorFromList(utils::getConfigValue<double>(config, "start_bb"), 3)),
@@ -239,6 +241,7 @@ void EpisodeContext::generateEpisode() {
     start_[i] = boost::random::uniform_real_distribution<>(start_bb_origin[i], start_bb_origin[i] + start_bb_dims[i])(rng_);
     goal_[i] = boost::random::uniform_real_distribution<>(goal_bb_origin[i], goal_bb_origin[i] + goal_bb_dims[i])(rng_);
   }
+  obstacle_loader_->loadNext();
 }
 
 void EpisodeContext::startEpisode() {
@@ -251,7 +254,7 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared
     : ControlForceCalculator(std::move(obstacles_), config, data_path),
       interval_duration_(ros::Duration(utils::getConfigValue<double>(config["rl"], "interval_duration")[0] * 10e-4)),
       goal_reached_threshold_distance_(utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0]),
-      episode_context_(obstacles, config["rl"]),
+      episode_context_(obstacles, obstacle_loader_, config["rl"]),
       train(utils::getConfigValue<bool>(config["rl"], "train")[0]),
       output_dir(utils::getConfigValue<std::string>(config["rl"], "output_directory")[0]),
       last_calculation_(ros::Time::now()) {
@@ -345,7 +348,7 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
 
 DeepQNetworkAgent::DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle,
                                      const std::string& data_path)
-    : ReinforcementLearningAgent(std::move(obstacles_), config, node_handle) {}
+    : ReinforcementLearningAgent(std::move(obstacles_), config, node_handle, data_path) {}
 
 torch::Tensor DeepQNetworkAgent::getActionInference(torch::Tensor& state) {}
 }  // namespace control_force_provider::backend

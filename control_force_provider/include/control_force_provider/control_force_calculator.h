@@ -114,6 +114,7 @@ class EpisodeContext {
   Eigen::Vector4d start_;
   Eigen::Vector4d goal_;
   std::vector<boost::shared_ptr<Obstacle>>& obstacles_;
+  boost::shared_ptr<ObstacleLoader>& obstacle_loader_;
   boost::random::mt19937 rng_;
   const Eigen::Vector3d start_bb_origin;
   const Eigen::Vector3d start_bb_dims;
@@ -122,7 +123,7 @@ class EpisodeContext {
   double begin_max_offset_;
 
  public:
-  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles_, const YAML::Node& config);
+  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles_, boost::shared_ptr<ObstacleLoader>& obstacle_loader, const YAML::Node& config);
   void generateEpisode();
   void startEpisode();
   const Eigen::Vector4d& getStart() const { return start_; };
@@ -155,7 +156,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
 
  public:
   ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle,
-                             const std::string& data_path = "");
+                             const std::string& data_path);
   ~ReinforcementLearningAgent() override = default;
 };
 
@@ -164,7 +165,6 @@ class DeepQNetworkAgent : public ReinforcementLearningAgent {
   torch::Tensor getActionInference(torch::Tensor& state) override;
 
  public:
-  DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle,
-                    const std::string& data_path = "");
+  DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle, const std::string& data_path);
 };
 }  // namespace control_force_provider::backend

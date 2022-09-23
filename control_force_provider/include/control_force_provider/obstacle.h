@@ -67,14 +67,17 @@ class ObstacleLoader {
   const static inline double rcm_estimation_max_var = 1e-6;
   std::vector<boost::shared_ptr<FramesObstacle>> obstacles_;
   std::vector<std::string> csv_files_;
+  std::vector<std::string>::iterator files_iter_;
   std::vector<std::map<double, Eigen::Affine3d>> cached_frames_;
   int reference_obstacle_;
   boost::random::mt19937 rng_;
+  static bool isValidFile(const std::string& file);
   std::vector<std::map<double, Eigen::Affine3d>> parseFile(const std::string& file);
   Eigen::Vector3d estimateRCM(const std::map<double, Eigen::Affine3d>& frames);
   void updateObstacles(std::vector<std::map<double, Eigen::Affine3d>> frames);
 
  public:
   ObstacleLoader(std::vector<boost::shared_ptr<FramesObstacle>> obstacles, const std::string& path, int reference_obstacle = -1);
+  void loadNext();
 };
 }  // namespace control_force_provider::backend

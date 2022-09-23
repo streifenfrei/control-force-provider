@@ -60,7 +60,10 @@ Vector4d WaypointsObstacle::getPositionAt(const ros::Time& ros_time) {
 
 FramesObstacle::FramesObstacle(const std::string& id) : Obstacle(id) { iter_ = frames_.begin(); }
 
-void FramesObstacle::setFrames(std::map<double, Affine3d> frames) { frames_ = std::move(frames); }
+void FramesObstacle::setFrames(std::map<double, Affine3d> frames) {
+  frames_ = std::move(frames);
+  iter_ = frames_.begin();
+}
 
 Vector4d FramesObstacle::getPositionAt(const ros::Time& ros_time) {
   double seconds = ros_time.toSec();
@@ -93,11 +96,18 @@ Vector4d FramesObstacle::getPositionAt(const ros::Time& ros_time) {
 ObstacleLoader::ObstacleLoader(std::vector<boost::shared_ptr<FramesObstacle>> obstacles, const std::string& path, int reference_obstacle)
     : obstacles_(std::move(obstacles)), reference_obstacle_(reference_obstacle) {
   if (obstacles_.empty()) return;
-  if (std::filesystem::is_regular_file(path)) csv_files_.push_back(path);
+  if (isValidFile(path))
+    csv_files_.push_back(path);
+  else if (std::filesystem::is_directory(path)) {
+    for (auto& file : std::filesystem::recursive_directory_iterator(path))
+      if (isValidFile(file.path())) csv_files_.push_back(file.path());
+  }
   if (csv_files_.empty()) throw CSVError("No .csv files found in " + path);
-  std::vector<std::map<double, Affine3d>> frames = parseFile(csv_files_[0]);
-  updateObstacles(std::move(frames));
+  files_iter_ = csv_files_.begin();
+  loadNext();
 }
+
+bool ObstacleLoader::isValidFile(const std::string& file) { return std::filesystem::is_regular_file(file) && file.substr(file.size() - 4, 4) == ".csv"; }
 
 std::vector<std::map<double, Affine3d>> ObstacleLoader::parseFile(const std::string& file) {
   std::vector<std::map<double, Affine3d>> out(obstacles_.size());
@@ -153,8 +163,8 @@ Vector3d ObstacleLoader::estimateRCM(const std::map<double, Eigen::Affine3d>& fr
         const Vector3d& a2 = p2.translation();
         Vector3d b2 = (p2 * Translation3d(0, 0, 1)).translation() - a2;
         utils::shortestLine(a1, b1, a2, b2, t, s);
-        points.emplace_back(a1 + t * b1);
-        points.emplace_back(a2 + s * b2);
+        if (!std::isnan(t)) points.emplace_back(a1 + t * b1);
+        if (!std::isnan(s)) points.emplace_back(a2 + s * b2);
       }
     }
   }
@@ -185,5 +195,12 @@ void ObstacleLoader::updateObstacles(std::vector<std::map<double, Affine3d>> fra
     obstacles_[i]->setFrames(std::move(frames[i]));
     obstacles_[i]->setRCM(rcm);
   }
+}
+
+void ObstacleLoader::loadNext() {
+  std::vector<std::map<double, Affine3d>> frames = parseFile(*files_iter_);
+  updateObstacles(std::move(frames));
+  files_iter_++;
+  if (files_iter_ == csv_files_.end()) files_iter_ = csv_files_.begin();
 }
 }  // namespace control_force_provider::backend
