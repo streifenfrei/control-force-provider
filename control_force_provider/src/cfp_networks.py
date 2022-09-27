@@ -14,7 +14,7 @@ from enum import Enum
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+Transition = namedtuple('Transition', ('state', 'velocity', 'action', 'next_state', 'reward'))
 
 
 class StateAugmenter:
@@ -76,7 +76,8 @@ class RewardFunction:
         distance_vectors = (np.array(state_dict["points_on_l2"][x:x + 3]) - np.array(state_dict["points_on_l1"][x:x + 3]) for x in range(0, len(state_dict["points_on_l1"]), 3))
         distance_to_goal = np.linalg.norm(goal - robot_position)
         motion_reward = (np.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration)
-        collision_penalty = - np.maximum(reduce(lambda x, y: x + y, ((self.dc / (np.linalg.norm(o) + 1e-10)) ** self.mc for o in distance_vectors)), self.max_penalty)
+        collision_penalty = 0 if any(np.any(np.isnan(x)) for x in distance_vectors) else - np.maximum(reduce(lambda x, y: x + y, ((self.dc / (np.linalg.norm(o) + 1e-10)) ** self.mc for o in distance_vectors)),
+                                                                                                      self.max_penalty)
         goal_reward = 0 if distance_to_goal > self.dg else self.rg
         total_reward = motion_reward + collision_penalty + goal_reward
         return total_reward, motion_reward, collision_penalty, goal_reward
@@ -172,6 +173,8 @@ class RLContext(ABC):
                  exploration_magnitude_sigma,
                  exploration_decay,
                  exploration_duration,
+                 dot_loss_factor,
+                 dot_loss_decay,
                  **kwargs):
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -200,6 +203,8 @@ class RLContext(ABC):
         self.exploration_decay = exploration_decay
         self.exploration_duration = exploration_duration
         self.exploration_index = 0
+        self.dot_loss_factor = dot_loss_factor
+        self.dot_loss_decay = dot_loss_decay
 
     def __del__(self):
         self.summary_writer.flush()
@@ -297,38 +302,52 @@ class DQNContext(RLContext):
         self.replay_buffer = ReplayBuffer(replay_buffer_size)
         self.target_network_update_rate = target_network_update_rate
         self.ts_model = os.path.join(self.output_dir, "dqn_ts.pt")
-        self.loss_accumulator = RLContext.Accumulator()
+        self.total_loss_accumulator = RLContext.Accumulator()
+        self.rl_loss_accumulator = RLContext.Accumulator()
+        self.dot_loss_accumulator = RLContext.Accumulator()
 
     def _get_state_dict(self):
-        return {"model_state_dict": self.dqn_policy.state_dict(), "optimizer_state_dict": self.optimizer.state_dict()}
+        return {"model_state_dict": self.dqn_policy.state_dict(), "optimizer_state_dict": self.optimizer.state_dict(), "dot_loss_factor": self.dot_loss_factor}
         # torch.jit.script(self.dqn_policy).save(self.ts_model)
 
     def _load_impl(self, state_dict):
         self.dqn_policy.load_state_dict(state_dict["model_state_dict"])
         self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
+        self.dot_loss_factor = state_dict["dot_loss_factor"]
 
     def _update_impl(self, state, reward):
         if reward is not None:
-            self.replay_buffer.push(self.last_state_dict["state"], self.action, state, reward)
+            self.replay_buffer.push(self.last_state_dict["state"], self.last_state_dict["robot_velocity"][:3], self.action, state, reward)
         if len(self.replay_buffer) >= self.batch_size:
             for i in range(self.updates_per_step):
                 batch = Transition(*zip(*self.replay_buffer.sample(self.batch_size)))
                 state_batch = torch.tensor(self.state_augmenter(np.stack(batch.state)), dtype=torch.float32).to(device)
+                velocity_batch = torch.tensor(np.stack(batch.velocity), dtype=torch.float32).to(device)
                 action_batch = torch.tensor(np.stack(batch.action), dtype=torch.float32).to(device)
                 reward_batch = torch.tensor(np.stack(batch.reward), dtype=torch.float32).unsqueeze(-1).to(device)
-                q = self.dqn_policy(state_batch, action_batch)[1]
+                mu, q, _ = self.dqn_policy(state_batch, action_batch)
                 with torch.no_grad():
                     v_target = self.dqn_target(state_batch)[2]
                 target = reward_batch + self.discount_factor * v_target
-                loss = nn.MSELoss()(q, target)
-                self.loss_accumulator.update_state(loss.detach().numpy())
+                rl_loss = (1 - self.dot_loss_factor) * nn.MSELoss()(q, target)
+                dot_loss = - self.dot_loss_factor * torch.mean(torch.bmm((mu / torch.norm(mu, dim=1).unsqueeze(1)).unsqueeze(1), (velocity_batch / torch.norm(velocity_batch, dim=1).unsqueeze(1)).unsqueeze(2)).squeeze(2))
+                loss = rl_loss + dot_loss
+                self.rl_loss_accumulator.update_state(rl_loss.detach().numpy())
+                self.dot_loss_accumulator.update_state(dot_loss.detach().numpy())
+                self.total_loss_accumulator.update_state(loss.detach().numpy())
                 self.optimizer.zero_grad()
                 loss.backward()
                 clip_grad_norm_(self.dqn_policy.parameters(), 1)
                 self.optimizer.step()
-            self.summary_writer.add_scalar("loss", self.loss_accumulator.get_value(), self.epoch)
-            self.loss_accumulator.reset()
+            self.summary_writer.add_scalar("loss/rl", self.rl_loss_accumulator.get_value(), self.epoch)
+            self.summary_writer.add_scalar("loss/dot", self.dot_loss_accumulator.get_value(), self.epoch)
+            self.summary_writer.add_scalar("loss/total", self.total_loss_accumulator.get_value(), self.epoch)
+            self.rl_loss_accumulator.reset()
+            self.dot_loss_accumulator.reset()
+            self.total_loss_accumulator.reset()
+            self.summary_writer.add_scalar("dot_loss_factor", self.dot_loss_factor, self.epoch)
+            self.dot_loss_factor *= self.dot_loss_decay
             self.epoch += 1
         if self.epoch % self.target_network_update_rate == 0:
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
