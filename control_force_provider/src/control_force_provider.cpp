@@ -31,7 +31,9 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
     } else {
       const YAML::Node& ob_config = it->second;
       std::string ob_type = getConfigValue<std::string>(ob_config, "type")[0];
-      if (ob_type == "waypoints") {
+      if (ob_type == "dummy") {
+        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<DummyObstacle>(id)));
+      } else if (ob_type == "waypoints") {
         obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, id)));
       } else if (ob_type == "csv") {
         boost::shared_ptr<FramesObstacle> obstacle = boost::make_shared<FramesObstacle>(id);

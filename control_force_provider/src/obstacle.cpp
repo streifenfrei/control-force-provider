@@ -198,6 +198,7 @@ void ObstacleLoader::updateObstacles(std::vector<std::map<double, Affine3d>> fra
 }
 
 void ObstacleLoader::loadNext() {
+  if (obstacles_.empty() || csv_files_.empty()) return;
   std::vector<std::map<double, Affine3d>> frames = parseFile(*files_iter_);
   updateObstacles(std::move(frames));
   files_iter_++;

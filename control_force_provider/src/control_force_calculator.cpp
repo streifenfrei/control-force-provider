@@ -10,7 +10,6 @@
 
 using namespace Eigen;
 namespace control_force_provider::backend {
-
 ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path)
     : obstacles(std::move(obstacles_)),
       workspace_bb_origin_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 0)),

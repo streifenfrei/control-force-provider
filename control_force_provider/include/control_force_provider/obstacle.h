@@ -28,6 +28,14 @@ class Obstacle {
   void setRCM(Eigen::Vector3d rcm) { rcm_ = rcm; }
 };
 
+class DummyObstacle : public Obstacle {
+ protected:
+  Eigen::Vector4d getPositionAt(const ros::Time& ros_time) override { return Eigen::Vector4d::Zero(); };
+
+ public:
+  explicit DummyObstacle(const std::string& id) : Obstacle(id) { rcm_ = Eigen::Vector3d::Zero(); };
+};
+
 class WaypointsObstacle : public Obstacle {
  private:
   std::vector<Eigen::Vector3d> waypoints_;
