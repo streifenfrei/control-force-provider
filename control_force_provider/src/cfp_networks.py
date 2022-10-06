@@ -81,9 +81,9 @@ class RewardFunction:
         self.interval_duration = float(interval_duration)
 
     def __call__(self, state_dict, last_state_dict):
-        goal = np.array(state_dict["goal"])
-        robot_position = np.array(state_dict["robot_position"])
-        last_robot_position = np.array(last_state_dict["robot_position"])
+        goal = np.array(state_dict["goal"])[:3]
+        robot_position = np.array(state_dict["robot_position"])[:3]
+        last_robot_position = np.array(last_state_dict["robot_position"])[:3]
         distance_vectors = (np.array(state_dict["points_on_l2"][x:x + 3]) - np.array(state_dict["points_on_l1"][x:x + 3]) for x in range(0, len(state_dict["points_on_l1"]), 3))
         distance_to_goal = np.linalg.norm(goal - robot_position)
         motion_reward = (np.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration)
