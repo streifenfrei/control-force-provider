@@ -26,6 +26,7 @@ class ControlForceCalculator {
   const Eigen::Vector3d workspace_bb_dims_;
   const double max_force_;
   Eigen::Vector4d ee_position;
+  Eigen::Vector4d ee_rotation;
   Eigen::Vector4d ee_velocity;
   Eigen::Vector3d rcm;
   Eigen::Vector4d goal;
@@ -34,6 +35,7 @@ class ControlForceCalculator {
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
   boost::shared_ptr<ObstacleLoader> obstacle_loader_;
   std::vector<Eigen::Vector4d> ob_positions;
+  std::vector<Eigen::Vector4d> ob_rotations;
   std::vector<Eigen::Vector4d> ob_velocities;
   std::vector<Eigen::Vector3d> ob_rcms;
   std::vector<Eigen::Vector3d> points_on_l1_;

@@ -20,6 +20,7 @@ ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obs
   for (auto& obstacle : obstacles) {
     ob_rcms.push_back(obstacle->getRCM());
     ob_positions.emplace_back();
+    ob_rotations.emplace_back();
     ob_velocities.emplace_back();
     points_on_l1_.emplace_back();
     points_on_l2_.emplace_back();
@@ -42,12 +43,16 @@ void ControlForceCalculator::getForce(Vector4d& force, const Vector4d& ee_positi
   if (rcm_available_) {
     ee_velocity = ee_position_ - ee_position;
     ee_position = ee_position_;
+    Quaterniond ee_rot = utils::zRotation(rcm, ee_position.head(3));
+    ee_rotation = {ee_rot.x(), ee_rot.y(), ee_rot.z(), ee_rot.w()};
     elapsed_time = (ros::Time::now() - start_time).toSec();
     for (size_t i = 0; i < obstacles.size(); i++) {
       Vector4d new_ob_position = obstacles[i]->getPosition();
       ob_velocities[i] = new_ob_position - ob_positions[i];
       ob_positions[i] = new_ob_position;
       ob_rcms[i] = obstacles[i]->getRCM();
+      Quaterniond ob_rot = utils::zRotation(ob_rcms[i], ob_positions[i].head(3));
+      ob_rotations[i] = {ob_rot.x(), ob_rot.y(), ob_rot.z(), ob_rot.w()};
     }
     updateDistanceVectors();
     getForceImpl(force);
@@ -160,12 +165,18 @@ StateProvider::StatePopulator StateProvider::createPopulatorFromString(const Con
     populator.vectors_.push_back(cfc.ee_position.data());
   } else if (id == "rve") {
     populator.vectors_.push_back(cfc.ee_velocity.data());
+  } else if (id == "rro") {
+    populator.length_ = 4;
+    populator.vectors_.push_back(cfc.ee_rotation.data());
   } else if (id == "rpp") {
     populator.vectors_.push_back(cfc.rcm.data());
   } else if (id == "oee") {
     for (auto& pos : cfc.ob_positions) populator.vectors_.push_back(pos.data());
   } else if (id == "ove") {
     for (auto& vel : cfc.ob_velocities) populator.vectors_.push_back(vel.data());
+  } else if (id == "oro") {
+    populator.length_ = 4;
+    for (auto& rot : cfc.ob_rotations) populator.vectors_.push_back(rot.data());
   } else if (id == "opp") {
     for (auto& rcm : cfc.ob_rcms) populator.vectors_.push_back(rcm.data());
   } else if (id == "gol") {

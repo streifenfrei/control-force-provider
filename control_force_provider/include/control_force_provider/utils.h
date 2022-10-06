@@ -57,5 +57,7 @@ Eigen::Vector3d vectorFromList(const std::vector<double> &list, unsigned int sta
 std::string readFile(const std::string &file);
 
 void shortestLine(const Eigen::Vector3d &a1, const Eigen::Vector3d &b1, const Eigen::Vector3d &a2, const Eigen::Vector3d &b2, double &t, double &s);
+
+Eigen::Quaterniond zRotation(const Eigen::Vector3d &p1, const Eigen::Vector3d &p2);
 }  // namespace utils
 }  // namespace control_force_provider

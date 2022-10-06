@@ -22,9 +22,11 @@ class StateAugmenter:
     class _StatePartID(str, Enum):
         robot_position = "ree"
         robot_velocity = "rve"
+        robot_rotation = "rro"
         robot_rcm = "rpp"
         obstacle_position = "oee"
         obstacle_velocity = "ove"
+        obstacle_rotation = "oro"
         obstacle_rcm = "opp"
         goal = "gol"
         time = "tim"
@@ -43,8 +45,16 @@ class StateAugmenter:
             for arg in re.findall(self._arg_regex, args):
                 if arg[0] == "h":
                     history_length = int(arg[1:])
-            length = 1 if id == StateAugmenter._StatePartID.time else 3
-            length *= num_obstacles if id in [StateAugmenter._StatePartID.obstacle_position, StateAugmenter._StatePartID.obstacle_rcm] else 1
+            if id == StateAugmenter._StatePartID.time:
+                length = 1
+            elif id in [StateAugmenter._StatePartID.robot_rotation, StateAugmenter._StatePartID.obstacle_rotation]:
+                length = 4
+            else:
+                length = 3
+            length *= num_obstacles if id in [StateAugmenter._StatePartID.obstacle_position,
+                                              StateAugmenter._StatePartID.obstacle_velocity,
+                                              StateAugmenter._StatePartID.obstacle_rotation,
+                                              StateAugmenter._StatePartID.obstacle_rcm] else 1
             length *= history_length
             self.mapping[id] = (index, length)
             index += length

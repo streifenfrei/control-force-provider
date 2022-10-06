@@ -73,5 +73,12 @@ void shortestLine(const Vector3d &a1, const Vector3d &b1, const Vector3d &a2, co
   s = (t * e3 - b1.dot(a_diff)) / e1;
 }
 
+Quaterniond zRotation(const Vector3d &p1, const Vector3d &p2) {
+  Vector3d vec = (p2 - p1).normalized();
+  Vector3d z = Vector3d::UnitZ();
+  AngleAxis rot(std::acos(z.dot(vec)), z.cross(vec).normalized());
+  return Quaterniond(rot.toRotationMatrix());
+}
+
 }  // namespace utils
 }  // namespace control_force_provider
