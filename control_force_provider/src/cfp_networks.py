@@ -15,6 +15,7 @@ from enum import Enum
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 Transition = namedtuple('Transition', ('state', 'velocity', 'action', 'next_state', 'reward'))
+epsilon = 1e-9
 
 
 class StateAugmenter:
@@ -218,7 +219,7 @@ class RLContext(ABC):
         return
 
     @abstractmethod
-    def _update_impl(self, state, reward):
+    def _update_impl(self, state_dict, reward):
         return
 
     def save(self):
@@ -242,7 +243,6 @@ class RLContext(ABC):
     def update(self, state_dict):
         for key in state_dict:
             state_dict[key] = np.array(state_dict[key])
-        state = state_dict["state"]
         goal = state_dict["goal"]
         if (goal != self.goal).any():
             if self.goal is not None:
@@ -266,7 +266,7 @@ class RLContext(ABC):
             self.episode_accumulators["reward/per_episode/collision"].update_state(collision_penalty)
             self.summary_writer.add_scalar("reward/per_epoch/goal/", goal_reward, self.epoch)
             self.episode_accumulators["reward/per_episode/goal"].update_state(goal)
-        self._update_impl(state, reward)
+        self._update_impl(state_dict, reward)
         self.last_state_dict = state_dict
         # exploration
         if self.exploration_index == 0:
@@ -316,9 +316,9 @@ class DQNContext(RLContext):
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
         self.dot_loss_factor = state_dict["dot_loss_factor"]
 
-    def _update_impl(self, state, reward):
+    def _update_impl(self, state_dict, reward):
         if reward is not None:
-            self.replay_buffer.push(self.last_state_dict["state"], self.last_state_dict["robot_velocity"][:3], self.action, state, reward)
+            self.replay_buffer.push(self.last_state_dict["state"], state_dict["robot_velocity"][:3], self.action, state_dict["state"], reward)
         if len(self.replay_buffer) >= self.batch_size:
             for i in range(self.updates_per_step):
                 batch = Transition(*zip(*self.replay_buffer.sample(self.batch_size)))
@@ -331,7 +331,8 @@ class DQNContext(RLContext):
                     v_target = self.dqn_target(state_batch)[2]
                 target = reward_batch + self.discount_factor * v_target
                 rl_loss = (1 - self.dot_loss_factor) * nn.MSELoss()(q, target)
-                dot_loss = - self.dot_loss_factor * torch.mean(torch.bmm((mu / torch.norm(mu, dim=1).unsqueeze(1)).unsqueeze(1), (velocity_batch / torch.norm(velocity_batch, dim=1).unsqueeze(1)).unsqueeze(2)).squeeze(2))
+                dot_loss = - self.dot_loss_factor * torch.mean(
+                    torch.bmm((mu / (torch.norm(mu, dim=1).unsqueeze(1) + epsilon)).unsqueeze(1), (velocity_batch / (torch.norm(velocity_batch, dim=1).unsqueeze(1) + epsilon)).unsqueeze(2)).squeeze(2))
                 loss = rl_loss + dot_loss
                 self.rl_loss_accumulator.update_state(rl_loss.detach().numpy())
                 self.dot_loss_accumulator.update_state(dot_loss.detach().numpy())
@@ -353,7 +354,7 @@ class DQNContext(RLContext):
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
         self.dqn_policy.eval()
         with torch.no_grad():
-            self.action = self.dqn_policy(torch.tensor(state, dtype=torch.float32).unsqueeze(0))[0].squeeze(0).numpy()
+            self.action = self.dqn_policy(torch.tensor(state_dict["state"], dtype=torch.float32).unsqueeze(0))[0].squeeze(0).numpy()
         self.dqn_policy.train()
 
 
