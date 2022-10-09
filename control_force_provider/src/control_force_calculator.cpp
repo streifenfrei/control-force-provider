@@ -12,9 +12,11 @@ using namespace Eigen;
 namespace control_force_provider::backend {
 ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path)
     : obstacles(std::move(obstacles_)),
+      rcm(Vector3d::Zero()),
       workspace_bb_origin_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 0)),
       workspace_bb_dims_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 3)),
-      max_force_(utils::getConfigValue<double>(config, "max_force")[0]) {
+      max_force_(utils::getConfigValue<double>(config, "max_force")[0]),
+      offset_(Vector3d::Zero()) {
   std::vector<boost::shared_ptr<FramesObstacle>> frames_obstacles;
   int reference_obstacle = -1;
   for (auto& obstacle : obstacles) {
@@ -39,18 +41,21 @@ ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obs
 }
 
 void ControlForceCalculator::getForce(Vector4d& force, const Vector4d& ee_position_) {
+  Vector4d ee_position_off = ee_position_;
+  ee_position_off.head(3) -= offset_;
   if (!goal_available_) setGoal(ee_position);
   if (rcm_available_) {
-    ee_velocity = ee_position_ - ee_position;
-    ee_position = ee_position_;
-    Quaterniond ee_rot = utils::zRotation(rcm, ee_position.head(3));
+    ee_velocity = ee_position_off - ee_position;
+    ee_position = ee_position_off;
+    Quaterniond ee_rot = utils::zRotation(rcm - offset_, ee_position.head(3));
     ee_rotation = {ee_rot.x(), ee_rot.y(), ee_rot.z(), ee_rot.w()};
     elapsed_time = (ros::Time::now() - start_time).toSec();
     for (size_t i = 0; i < obstacles.size(); i++) {
       Vector4d new_ob_position = obstacles[i]->getPosition();
+      new_ob_position.head(3) -= offset_;
       ob_velocities[i] = new_ob_position - ob_positions[i];
       ob_positions[i] = new_ob_position;
-      ob_rcms[i] = obstacles[i]->getRCM();
+      ob_rcms[i] = obstacles[i]->getRCM() - offset_;
       Quaterniond ob_rot = utils::zRotation(ob_rcms[i], ob_positions[i].head(3));
       ob_rotations[i] = {ob_rot.x(), ob_rot.y(), ob_rot.z(), ob_rot.w()};
     }
@@ -93,6 +98,14 @@ void ControlForceCalculator::updateDistanceVectors() {
     points_on_l1_[i] = (a1 + t * b1);
     points_on_l2_[i] = (a2 + s * b2);
   }
+}
+
+void ControlForceCalculator::setOffset(Vector3d offset) {
+  Vector3d translation = offset_ - offset;
+  workspace_bb_origin_ += translation;
+  rcm += translation;
+  goal.head(3) += translation;
+  offset_ = offset;
 }
 
 PotentialFieldMethod::PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path)
@@ -266,8 +279,10 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared
       goal_reached_threshold_distance_(utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0]),
       episode_context_(obstacles, obstacle_loader_, config["rl"]),
       train(utils::getConfigValue<bool>(config["rl"], "train")[0]),
+      rcm_origin_(utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]),
       output_dir(utils::getConfigValue<std::string>(config["rl"], "output_directory")[0]),
       last_calculation_(ros::Time::now()) {
+  if (rcm_origin_) setOffset(rcm);
   state_provider = boost::make_shared<StateProvider>(*this, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0]);
   calculation_future_ = calculation_promise_.get_future();
   calculation_promise_.set_value(Vector4d::Zero());
@@ -275,7 +290,7 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared
     training_service_client = boost::make_shared<ros::ServiceClient>(node_handle.serviceClient<control_force_provider_msgs::UpdateNetwork>("update_network"));
   }
   episode_context_.generateEpisode();
-  goal = episode_context_.getStart();
+  setGoal(episode_context_.getStart());
   initializing_episode = true;
 }
 
@@ -317,6 +332,11 @@ Vector4d ReinforcementLearningAgent::getAction() {
 void ReinforcementLearningAgent::calculationRunnable() { calculation_promise_.set_value(getAction()); }
 
 void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
+  if (rcm_origin_ && rcm != Vector3d::Zero()) {
+    setOffset(rcm);
+    force = current_force_;
+    return;
+  }
   ros::Time now = ros::Time::now();
   if (now - last_calculation_ > interval_duration_) {
     if (train) {
@@ -325,11 +345,11 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
       if (goal_vector.norm() < goal_reached_threshold_distance_) {
         if (initializing_episode) {
           episode_context_.startEpisode();
-          goal = episode_context_.getGoal();
+          setGoal(episode_context_.getGoal());
           initializing_episode = false;
         } else {
           episode_context_.generateEpisode();
-          goal = episode_context_.getStart();
+          setGoal(episode_context_.getStart());
           initializing_episode = true;
         }
       }

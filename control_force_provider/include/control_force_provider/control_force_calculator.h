@@ -18,11 +18,12 @@ namespace control_force_provider::backend {
 class ControlForceCalculator {
  private:
   const inline static double workspace_bb_stopping_strength = 0.001;
+  const inline static double rcm_max_norm = 10;
   bool rcm_available_ = false;
   bool goal_available_ = false;
 
  protected:
-  const Eigen::Vector3d workspace_bb_origin_;
+  Eigen::Vector3d workspace_bb_origin_;
   const Eigen::Vector3d workspace_bb_dims_;
   const double max_force_;
   Eigen::Vector4d ee_position;
@@ -40,6 +41,7 @@ class ControlForceCalculator {
   std::vector<Eigen::Vector3d> ob_rcms;
   std::vector<Eigen::Vector3d> points_on_l1_;
   std::vector<Eigen::Vector3d> points_on_l2_;
+  Eigen::Vector3d offset_;
   friend class Visualizer;
   friend class StateProvider;
 
@@ -47,19 +49,24 @@ class ControlForceCalculator {
 
   void updateDistanceVectors();
 
+  void setOffset(Eigen::Vector3d offset);
+
  public:
   ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path);
   void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position_);
   virtual ~ControlForceCalculator() = default;
   [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm; }
   void setRCM(const Eigen::Vector3d& rcm_) {
-    rcm_available_ = true;
-    rcm = rcm_;
+    if (rcm_.norm() < rcm_max_norm) {
+      rcm_available_ = true;
+      rcm = rcm_ - offset_;
+    }
   };
   [[nodiscard]] const Eigen::Vector4d& getGoal() const { return goal; }
   void setGoal(const Eigen::Vector4d& goal_) {
     goal_available_ = true;
     goal = goal_;
+    goal.head(3) -= offset_;
     start_time = ros::Time::now();
   };
 };
@@ -138,6 +145,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   const bool train;
   const ros::Duration interval_duration_;
   const double goal_reached_threshold_distance_;
+  const bool rcm_origin_;
   EpisodeContext episode_context_;
   bool initializing_episode = true;
   Eigen::Vector4d current_force_;
