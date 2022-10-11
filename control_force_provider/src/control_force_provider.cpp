@@ -85,13 +85,12 @@ ControlForceProvider::~ControlForceProvider() {
   node_handle_.shutdown();
 }
 
-SimulatedRobot::SimulatedRobot(Vector3d rcm, Vector4d position)
-    : ROSNode("cfp_robot"), rcm_(std::move(rcm)), position_(std::move(position)), velocity_(Vector4d::Zero()) {
+SimulatedRobot::SimulatedRobot(Vector3d rcm, Vector4d position, ControlForceProvider& cfp)
+    : rcm_(std::move(rcm)), position_(std::move(position)), cfp_(cfp), velocity_(Vector4d::Zero()) {
   cfp_.setRCM(rcm_);
-  timer_ = node_handle_.createTimer(ros::Duration(1e-3), &SimulatedRobot::update, this);
 }
 
-void SimulatedRobot::update(const ros::TimerEvent& event) {
+void SimulatedRobot::update() {
   cfp_.getForce(force_, position_);
   double magnitude = force_.norm();
   if (magnitude > max_force) {

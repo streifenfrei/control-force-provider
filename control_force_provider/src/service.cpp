@@ -16,12 +16,6 @@ bool stop = false;
 
 void sigint_handler(int signum) { stop = true; }
 
-void simService() {
-  control_force_provider::SimulatedRobot simulation(Eigen::Vector3d(0.3, 0.0, 0.43), Eigen::Vector4d(0.3, 0.0, 0.3, 0.0));
-  while (!stop) {
-  };  // Use Events etc..
-}
-
 bool setRealtimePriority() {
   const int thread_priority = sched_get_priority_max(SCHED_FIFO);
   if (thread_priority == -1) {
@@ -37,7 +31,8 @@ bool setRealtimePriority() {
   return true;
 }
 
-void udsService() {
+int main(int argc, char* argv[]) {
+  bool detached = argc >= 2 && std::string(argv[1]) == "-d";
   control_force_provider::ControlForceProvider cfp;
   asio::io_context io_context_{};
   remove(socket_file);
@@ -48,37 +43,22 @@ void udsService() {
   void* data = malloc(vector_size);
   asio::mutable_buffer input_buffer(data, vector_size);
   if (setRealtimePriority()) ROS_INFO_STREAM_NAMED("control_force_provider/service", "Successfully set realtime priority for current thread.");
+  signal(SIGINT, sigint_handler);
+  boost::shared_ptr<control_force_provider::SimulatedRobot> robot;
+  if (detached) robot = boost::make_shared<control_force_provider::SimulatedRobot>(cfp.getRCM(), Eigen::Vector4d(0.3, 0.0, 0.3, 0.0), cfp);
   while (!stop) {
     if (uds_socket_.available() >= vector_size) {
+      Eigen::Vector4d force = Eigen::Vector4d::Zero();
       read(uds_socket_, input_buffer);
-      Eigen::Vector4d ee_position((double*)input_buffer.data());
-      Eigen::Vector4d force;
-      cfp.getForce(force, ee_position);
+      if (detached) {
+        robot->update();
+      } else {
+        Eigen::Vector4d ee_position((double*)input_buffer.data());
+        cfp.getForce(force, ee_position);
+      }
       write(uds_socket_, asio::const_buffer((const void*)force.data(), vector_size));
     }
   }
   remove(socket_file);
   free(data);
-}
-
-enum Mode { sim = 1, uds = 2 };
-
-int main(int argc, char* argv[]) {
-  int mode = uds;
-  if (argc >= 3) {
-    std::string arg = argv[1];
-    if (arg == "--mode") mode = std::stoi(argv[2]);
-  }
-  signal(SIGINT, sigint_handler);
-  switch (mode) {
-    case sim:
-      simService();
-      break;
-    case uds:
-      udsService();
-      break;
-    default:
-      ROS_ERROR_STREAM_NAMED("control_force_provider/service", "Invalid mode: " << mode);
-      return -1;
-  }
 }

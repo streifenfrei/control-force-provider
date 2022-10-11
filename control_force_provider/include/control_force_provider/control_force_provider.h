@@ -46,20 +46,17 @@ class ControlForceProvider : ROSNode {
   void setRCM(const Eigen::Vector3d& rcm) { control_force_calculator_->setRCM(rcm); }
 };
 
-class SimulatedRobot : ROSNode {
+class SimulatedRobot {
  private:
   const static inline double max_force = 1e-4;
-  ros::Timer timer_;
-  ControlForceProvider cfp_;
+  ControlForceProvider& cfp_;
   Eigen::Vector3d rcm_;
   Eigen::Vector4d position_;
   Eigen::Vector4d velocity_;
   Eigen::Vector4d force_;
-  ros::NodeHandle node_handle_{};
-  ros::AsyncSpinner spinner_{1};
-  void update(const ros::TimerEvent& event);
 
  public:
-  SimulatedRobot(Eigen::Vector3d rcm, Eigen::Vector4d position);
+  SimulatedRobot(Eigen::Vector3d rcm, Eigen::Vector4d position, ControlForceProvider& cfp);
+  void update();
 };
 }  // namespace control_force_provider
