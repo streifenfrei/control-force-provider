@@ -8,6 +8,8 @@ float64[] obstacles_rcms
 float64[] points_on_l1
 float64[] points_on_l2
 float64[4] goal
+float64[3] workspace_bb_origin
+float64[3] workspace_bb_dims
 float64 elapsed_time
 ---
 float64[4] action

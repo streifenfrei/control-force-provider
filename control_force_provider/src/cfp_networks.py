@@ -16,6 +16,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 Transition = namedtuple('Transition', ('state', 'velocity', 'action', 'next_state', 'reward'))
 epsilon = 1e-9
+bb_repulsion_distance = 1e-2
 
 
 class StateAugmenter:
@@ -181,6 +182,7 @@ class RLContext(ABC):
                  state_augmenter,
                  output_directory,
                  exploration_angle_sigma,
+                 exploration_bb_rep_p,
                  exploration_magnitude_sigma,
                  exploration_decay,
                  exploration_duration,
@@ -209,6 +211,8 @@ class RLContext(ABC):
         self.exploration_angle_sigma = exploration_angle_sigma
         self.exploration_rot_axis = None
         self.exploration_angle = 0
+        self.exploration_bb_rep_p = exploration_bb_rep_p
+        self.exploration_bb_rep_dims = np.zeros(3)
         self.exploration_magnitude_sigma = exploration_magnitude_sigma
         self.exploration_magnitude = 0
         self.exploration_decay = exploration_decay
@@ -238,6 +242,7 @@ class RLContext(ABC):
                       "epoch": self.epoch,
                       "episode": self.episode - 1,
                       "exploration_angle_sigma": self.exploration_angle_sigma,
+                      "exploration_bb_rep_p": self.exploration_bb_rep_p,
                       "exploration_magnitude_sigma": self.exploration_magnitude_sigma}
         torch.save(state_dict, self.save_file)
 
@@ -247,6 +252,7 @@ class RLContext(ABC):
             self.epoch = state_dict["epoch"]
             self.episode = state_dict["episode"]
             self.exploration_angle_sigma = state_dict["exploration_angle_sigma"]
+            self.exploration_bb_rep_p = state_dict["exploration_bb_rep_p"]
             self.exploration_magnitude_sigma = state_dict["exploration_magnitude_sigma"]
             self._load_impl(state_dict)
 
@@ -283,7 +289,23 @@ class RLContext(ABC):
             self.exploration_rot_axis = self.rng.multivariate_normal(np.zeros(3), np.identity(3))
             self.exploration_angle = np.deg2rad(self.rng.normal(scale=self.exploration_angle_sigma))
             self.exploration_magnitude = self.rng.normal(scale=self.exploration_magnitude_sigma)
+            # set repulsion vector
+            self.exploration_bb_rep_dims = np.zeros(3)
+            if self.rng.uniform(0., 1.) < self.exploration_bb_rep_p:
+                bb_origin = state_dict["workspace_bb_origin"]
+                bb_end = bb_origin + state_dict["workspace_bb_dims"]
+                ee_position = state_dict["robot_position"][:3]
+                for i in range(3):
+                    if ee_position[i] - bb_repulsion_distance < bb_origin[i]:
+                        self.exploration_bb_rep_dims[i] = self.max_force
+                    elif ee_position[i] + bb_repulsion_distance > bb_end[i]:
+                        self.exploration_bb_rep_dims[i] = -self.max_force
         self.exploration_index = (self.exploration_index + 1) % self.exploration_duration
+        # change dimensions for which we repulse from the bb wall
+        for i in range(3):
+            if self.exploration_bb_rep_dims[i] != 0:
+                self.action[i] = self.exploration_bb_rep_dims[i]
+        self.exploration_bb_rep_p *= self.exploration_decay
         # rotate the action vector a bit
         self.exploration_rot_axis[2] = - (self.exploration_rot_axis[0] * self.action[0] + self.exploration_rot_axis[1] * self.action[1]) / self.action[2]  # make it perpendicular to the action vector
         self.exploration_rot_axis /= np.linalg.norm(self.exploration_rot_axis)

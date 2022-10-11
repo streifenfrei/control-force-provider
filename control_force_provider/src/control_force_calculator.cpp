@@ -317,6 +317,8 @@ Vector4d ReinforcementLearningAgent::getAction() {
       for (auto& point : points_on_l2_)
         for (size_t i = 0; i < point.size(); i++) srv.request.points_on_l2.push_back(point[i]);
       for (size_t i = 0; i < 4; i++) srv.request.goal[i] = goal[i];
+      for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_origin[i] = workspace_bb_origin_[i];
+      for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_dims[i] = workspace_bb_dims_[i];
       srv.request.elapsed_time = elapsed_time;
       if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to call training service.");
       return Vector4d(srv.response.action.data());

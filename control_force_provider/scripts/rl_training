@@ -37,7 +37,8 @@ def main():
     for key in config["obstacles"]:
         if key not in non_obstacles_keys:
             num_obstacles += 1
-    config["rl"]["max_force"] = config["max_force"]
+    for key in ["max_force", "workspace_bb"]:
+        config["rl"][key] = config[key]
     config = config["rl"]
     import cfp_networks
     state_augmenter = cfp_networks.StateAugmenter(config["state_pattern"], num_obstacles, **config["state_augmenter"])
