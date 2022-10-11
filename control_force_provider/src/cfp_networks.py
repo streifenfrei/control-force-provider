@@ -364,12 +364,14 @@ class DQNContext(RLContext):
                 with torch.no_grad():
                     v_target = self.dqn_target(state_batch)[2]
                 target = reward_batch + self.discount_factor * v_target
-                rl_loss = (1 - self.dot_loss_factor) * nn.MSELoss()(q, target)
-                dot_loss = - self.dot_loss_factor * torch.mean(
-                    torch.bmm((mu / (torch.norm(mu, dim=1).unsqueeze(1) + epsilon)).unsqueeze(1), (velocity_batch / (torch.norm(velocity_batch, dim=1).unsqueeze(1) + epsilon)).unsqueeze(2)).squeeze(2))
-                loss = rl_loss + dot_loss
+                rl_loss = nn.MSELoss()(q, target)
                 self.rl_loss_accumulator.update_state(rl_loss.detach().numpy())
+                rl_loss *= (1 - self.dot_loss_factor)
+                dot_loss = - torch.mean(
+                    torch.bmm((mu / (torch.norm(mu, dim=1).unsqueeze(1) + epsilon)).unsqueeze(1), (velocity_batch / (torch.norm(velocity_batch, dim=1).unsqueeze(1) + epsilon)).unsqueeze(2)).squeeze(2))
                 self.dot_loss_accumulator.update_state(dot_loss.detach().numpy())
+                dot_loss *= self.dot_loss_factor
+                loss = rl_loss + dot_loss
                 self.total_loss_accumulator.update_state(loss.detach().numpy())
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -390,5 +392,6 @@ class DQNContext(RLContext):
         with torch.no_grad():
             self.action = self.dqn_policy(torch.tensor(state_dict["state"], dtype=torch.float32).unsqueeze(0))[0].squeeze(0).numpy()
         self.dqn_policy.train()
+
 
 context_mapping = {"dqn": DQNContext}
