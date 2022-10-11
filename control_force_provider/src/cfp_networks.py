@@ -290,6 +290,8 @@ class RLContext(ABC):
         self.exploration_rot_axis *= self.exploration_angle
         self.exploration_angle_sigma *= self.exploration_decay
         self.action = Rotation.from_rotvec(self.exploration_rot_axis).apply(self.action)
+        if self.exploration_angle < 0:
+            self.exploration_rot_axis *= -1
         # change magnitude
         magnitude = np.linalg.norm(self.action)
         clipped_magnitude = np.clip(magnitude + self.exploration_magnitude, 0., self.max_force)
@@ -366,6 +368,5 @@ class DQNContext(RLContext):
         with torch.no_grad():
             self.action = self.dqn_policy(torch.tensor(state_dict["state"], dtype=torch.float32).unsqueeze(0))[0].squeeze(0).numpy()
         self.dqn_policy.train()
-
 
 context_mapping = {"dqn": DQNContext}
