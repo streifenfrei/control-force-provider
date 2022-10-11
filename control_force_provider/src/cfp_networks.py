@@ -275,7 +275,7 @@ class RLContext(ABC):
             self.summary_writer.add_scalar("reward/per_epoch/collision", collision_penalty, self.epoch)
             self.episode_accumulators["reward/per_episode/collision"].update_state(collision_penalty)
             self.summary_writer.add_scalar("reward/per_epoch/goal/", goal_reward, self.epoch)
-            self.episode_accumulators["reward/per_episode/goal"].update_state(goal)
+            self.episode_accumulators["reward/per_episode/goal"].update_state(goal_reward)
         self._update_impl(state_dict, reward)
         self.last_state_dict = state_dict
         # exploration
