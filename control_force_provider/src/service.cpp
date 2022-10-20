@@ -16,6 +16,7 @@ bool stop = false;
 
 void sigint_handler(int signum) { stop = true; }
 
+#ifdef REALTIME
 bool setRealtimePriority() {
   const int thread_priority = sched_get_priority_max(SCHED_FIFO);
   if (thread_priority == -1) {
@@ -30,6 +31,7 @@ bool setRealtimePriority() {
   }
   return true;
 }
+#endif
 
 int main(int argc, char* argv[]) {
   bool detached = argc >= 2 && std::string(argv[1]) == "-d";
@@ -42,7 +44,9 @@ int main(int argc, char* argv[]) {
   acceptor.accept(uds_socket_);
   void* data = malloc(vector_size);
   asio::mutable_buffer input_buffer(data, vector_size);
+#ifdef REALTIME
   if (setRealtimePriority()) ROS_INFO_STREAM_NAMED("control_force_provider/service", "Successfully set realtime priority for current thread.");
+#endif
   signal(SIGINT, sigint_handler);
   boost::shared_ptr<control_force_provider::SimulatedRobot> robot;
   if (detached) robot = boost::make_shared<control_force_provider::SimulatedRobot>(cfp.getRCM(), Eigen::Vector4d(0.3, 0.0, 0.3, 0.0), cfp);

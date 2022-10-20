@@ -1,8 +1,9 @@
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.16)
 project(control_force_provider)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(RT "use realtime threads" OFF)
 
 find_package(
         catkin REQUIRED COMPONENTS
@@ -23,6 +24,7 @@ catkin_package(
         INCLUDE_DIRS include
         LIBRARIES ${PROJECT_NAME}
         CATKIN_DEPENDS
+        message_runtime
         geometry_msgs
         eigen_conversions
         rviz_visual_tools
@@ -50,6 +52,10 @@ target_include_directories(
         ${catkin_INCLUDE_DIRS})
 
 add_executable(service src/service.cpp)
+if (RT)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC REALTIME)
+endif()
+
 target_link_libraries(service ${PROJECT_NAME})
 
 catkin_install_python(PROGRAMS scripts/rl_training
