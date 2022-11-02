@@ -55,6 +55,10 @@ if (RT)
 endif()
 
 add_executable(service src/service.cpp)
+if (RT)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC REALTIME)
+endif()
+
 target_link_libraries(service ${PROJECT_NAME})
 
 catkin_install_python(PROGRAMS scripts/rl_training
