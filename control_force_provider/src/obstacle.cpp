@@ -1,7 +1,8 @@
 #include "control_force_provider/obstacle.h"
 
 #include <cmath>
-#include <filesystem>
+#include <boost/filesystem.hpp>
+namespace fs = boost::filesystem;
 #include <sstream>
 #include <vector>
 
@@ -98,16 +99,16 @@ ObstacleLoader::ObstacleLoader(std::vector<boost::shared_ptr<FramesObstacle>> ob
   if (obstacles_.empty()) return;
   if (isValidFile(path))
     csv_files_.push_back(path);
-  else if (std::filesystem::is_directory(path)) {
-    for (auto& file : std::filesystem::recursive_directory_iterator(path))
-      if (isValidFile(file.path())) csv_files_.push_back(file.path());
+  else if (fs::is_directory(path)) {
+    for (auto& file : fs::recursive_directory_iterator(path))
+      if (isValidFile(file.path().string())) csv_files_.push_back(file.path().string());
   }
   if (csv_files_.empty()) throw CSVError("No .csv files found in " + path);
   files_iter_ = csv_files_.begin();
   loadNext();
 }
 
-bool ObstacleLoader::isValidFile(const std::string& file) { return std::filesystem::is_regular_file(file) && file.substr(file.size() - 4, 4) == ".csv"; }
+bool ObstacleLoader::isValidFile(const std::string& file) { return fs::is_regular_file(file) && file.substr(file.size() - 4, 4) == ".csv"; }
 
 std::vector<std::map<double, Affine3d>> ObstacleLoader::parseFile(const std::string& file) {
   std::vector<std::map<double, Affine3d>> out(obstacles_.size());
