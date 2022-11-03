@@ -130,6 +130,7 @@ class EpisodeContext {
   const Eigen::Vector3d goal_bb_origin;
   const Eigen::Vector3d goal_bb_dims;
   double begin_max_offset_;
+  friend class Visualizer;
 
  public:
   EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles_, boost::shared_ptr<ObstacleLoader>& obstacle_loader, const YAML::Node& config);
@@ -152,6 +153,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   ros::Time last_calculation_;
   boost::future<Eigen::Vector4d> calculation_future_;
   boost::promise<Eigen::Vector4d> calculation_promise_;
+  friend class Visualizer;
 
   Eigen::Vector4d getAction();
   void calculationRunnable();

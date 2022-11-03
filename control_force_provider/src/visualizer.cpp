@@ -46,6 +46,14 @@ void Visualizer::callback(const ros::TimerEvent& event) {
       if (distance < pfm->repulsion_distance_) visual_tools_.publishLine(pfm->points_on_l1_[i], pfm->points_on_l2_[i], rviz_visual_tools::CYAN);
     }
   }
+  boost::shared_ptr<ReinforcementLearningAgent> rl = boost::dynamic_pointer_cast<ReinforcementLearningAgent>(control_force_calculator_);
+  if (rl) {
+    const EpisodeContext& ec = rl->episode_context_;
+    visual_tools_.publishWireframeCuboid(Isometry3d(Translation3d(ec.start_bb_origin + 0.5 * ec.start_bb_dims)), ec.start_bb_dims[0], ec.start_bb_dims[1],
+                                         ec.start_bb_dims[2], rviz_visual_tools::TRANSLUCENT);
+    visual_tools_.publishWireframeCuboid(Isometry3d(Translation3d(ec.goal_bb_origin + 0.5 * ec.goal_bb_dims)), ec.goal_bb_dims[0], ec.goal_bb_dims[1],
+                                         ec.goal_bb_dims[2], rviz_visual_tools::TRANSLUCENT);
+  }
   visual_tools_.trigger();
 }
 }  // namespace control_force_provider::backend
