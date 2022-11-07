@@ -3,6 +3,11 @@
     <arg name="config" default="$(find control_force_provider)/default.config"/>
     <arg name="detached" default="true"/>
     <arg name="goal" default="0.3 0.0 0.3"/>
+    <arg name="remote" default="false"/>
+    <arg name="remote_address" default=""/>
+    <arg name="remote_user" default=""/>
+    <arg name="remote_env" default=""/>
+
     <param name="control_force_provider/config" value="$(arg config)" type="str"/>
     <node pkg="control_force_provider"
           type="service"
@@ -10,7 +15,14 @@
           args="$(eval '-d' if arg('detached') else '')"
           respawn="false" output="screen"/>
     <node pkg="rostopic" type="rostopic" name="rostopic" args="pub /control_force_provider/goal geometry_msgs/Point -- $(arg goal)"/>
+
+    <machine name="remote"
+             address="$(arg remote_address)"
+             user="$(arg remote_user)"
+             env-loader="$(arg remote_env)"/>
+
     <node pkg="control_force_provider"
+          machine="$(eval 'remote' if arg('remote_address') != '' else '')"
           type="rl_training"
           name="rl_training"
           respawn="false" output="screen"/>
