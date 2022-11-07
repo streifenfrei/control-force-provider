@@ -89,7 +89,7 @@ class RewardFunction:
         distance_to_goal = np.linalg.norm(goal - robot_position)
         motion_reward = (np.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration)
         collision_penalty = reduce(lambda x, y: x + y, ((self.dc / (np.linalg.norm(o) + 1e-10)) ** self.mc for o in distance_vectors))
-        collision_penalty = 0 if any(np.any(np.isnan(x)) for x in distance_vectors) else - np.minimum(collision_penalty, self.max_penalty)
+        collision_penalty = 0 if np.isnan(collision_penalty) or any(np.any(np.isnan(x)) for x in distance_vectors) else - np.minimum(collision_penalty, self.max_penalty)
         goal_reward = 0 if distance_to_goal > self.dg else self.rg
         total_reward = motion_reward + collision_penalty + goal_reward
         return total_reward, motion_reward, collision_penalty, goal_reward
@@ -285,7 +285,7 @@ class RLContext(ABC):
         self._update_impl(state_dict, reward)
         self.last_state_dict = state_dict
         # exploration
-        if self.exploration_index == 0:
+        if self.exploration_index == 0 or self.exploration_rot_axis is None:
             self.exploration_rot_axis = self.rng.multivariate_normal(np.zeros(3), np.identity(3))
             self.exploration_angle = np.deg2rad(self.rng.normal(scale=self.exploration_angle_sigma))
             self.exploration_magnitude = self.rng.normal(scale=self.exploration_magnitude_sigma)
@@ -341,7 +341,10 @@ class DQNContext(RLContext):
         self.dot_loss_accumulator = RLContext.Accumulator()
 
     def _get_state_dict(self):
-        return {"model_state_dict": self.dqn_policy.state_dict(), "optimizer_state_dict": self.optimizer.state_dict(), "dot_loss_factor": self.dot_loss_factor}
+        return {"model_state_dict": self.dqn_policy.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "dot_loss_factor": self.dot_loss_factor,
+                "replay_buffer": list(self.replay_buffer.buffer)}
         # torch.jit.script(self.dqn_policy).save(self.ts_model)
 
     def _load_impl(self, state_dict):
@@ -349,13 +352,15 @@ class DQNContext(RLContext):
         self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
         self.dot_loss_factor = state_dict["dot_loss_factor"]
+        self.replay_buffer.buffer = deque(state_dict["replay_buffer"], maxlen=self.replay_buffer.buffer.maxlen)
 
     def _update_impl(self, state_dict, reward):
         if reward is not None:
             self.replay_buffer.push(self.last_state_dict["state"], state_dict["robot_velocity"][:3], self.action, state_dict["state"], reward)
-        if len(self.replay_buffer) >= self.batch_size:
+        batch_size = min(len(self.replay_buffer), self.batch_size)
+        if batch_size >= 2:
             for i in range(self.updates_per_step):
-                batch = Transition(*zip(*self.replay_buffer.sample(self.batch_size)))
+                batch = Transition(*zip(*self.replay_buffer.sample(batch_size)))
                 state_batch = torch.tensor(self.state_augmenter(np.stack(batch.state)), dtype=torch.float32).to(device)
                 velocity_batch = torch.tensor(np.stack(batch.velocity), dtype=torch.float32).to(device)
                 action_batch = torch.tensor(np.stack(batch.action), dtype=torch.float32).to(device)
