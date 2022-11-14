@@ -143,6 +143,7 @@ class EpisodeContext {
 class ReinforcementLearningAgent : public ControlForceCalculator {
  private:
   const inline static double transition_smoothness = 0.001;
+  const inline static unsigned int goal_delay = 10;
   const bool train;
   const ros::Duration interval_duration_;
   const double goal_reached_threshold_distance_;
@@ -153,6 +154,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   ros::Time last_calculation_;
   boost::future<Eigen::Vector4d> calculation_future_;
   boost::promise<Eigen::Vector4d> calculation_promise_;
+  unsigned int goal_delay_count = 0;
   friend class Visualizer;
 
   Eigen::Vector4d getAction();
