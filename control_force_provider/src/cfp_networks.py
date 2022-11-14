@@ -11,6 +11,7 @@ from collections import namedtuple, deque, defaultdict
 from abc import ABC, abstractmethod
 from functools import reduce
 from enum import Enum
+from concurrent import futures
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -287,6 +288,9 @@ class RLContext(ABC):
             self.episode_accumulators["reward/per_episode/goal"].update_state(goal_reward)
         self._update_impl(state_dict, reward)
         self.last_state_dict = state_dict
+        if np.any(np.isnan(self.action)):
+            print("RL update yielded NaNs.")
+            return self.action
         # check for timeout
         if self.epoch - self.episode_start > self.episode_timeout:
             self.action = state_dict["goal"][:3] - state_dict["robot_position"][:3]
@@ -348,6 +352,7 @@ class DQNContext(RLContext):
         self.total_loss_accumulator = RLContext.Accumulator()
         self.rl_loss_accumulator = RLContext.Accumulator()
         self.dot_loss_accumulator = RLContext.Accumulator()
+        self.update_future = None
 
     def _get_state_dict(self):
         return {"model_state_dict": self.dqn_policy.state_dict(),
@@ -363,9 +368,7 @@ class DQNContext(RLContext):
         self.dot_loss_factor = state_dict["dot_loss_factor"]
         self.replay_buffer.buffer = deque(state_dict["replay_buffer"], maxlen=self.replay_buffer.buffer.maxlen)
 
-    def _update_impl(self, state_dict, reward):
-        if reward is not None:
-            self.replay_buffer.push(self.last_state_dict["state"], state_dict["robot_velocity"][:3], self.action, state_dict["state"], reward)
+    def _update_thread(self):
         batch_size = min(len(self.replay_buffer), self.batch_size)
         if batch_size >= 2:
             for i in range(self.updates_per_step):
@@ -400,12 +403,20 @@ class DQNContext(RLContext):
             self.summary_writer.add_scalar("dot_loss_factor", self.dot_loss_factor, self.epoch)
             self.dot_loss_factor *= self.dot_loss_decay
             self.epoch += 1
+
+    def _update_impl(self, state_dict, reward):
+        if reward is not None:
+            self.replay_buffer.push(self.last_state_dict["state"], state_dict["robot_velocity"][:3], self.action, state_dict["state"], reward)
+        if self.update_future is not None:
+            self.update_future.result()
         if self.epoch % self.target_network_update_rate == 0:
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
         self.dqn_policy.eval()
         with torch.no_grad():
             self.action = self.dqn_policy(torch.tensor(state_dict["state"], dtype=torch.float32).unsqueeze(0).to(device))[0].squeeze(0).cpu().numpy()
         self.dqn_policy.train()
+        with futures.ThreadPoolExecutor() as ex:
+            self.update_future = ex.submit(self._update_thread)
 
 
 context_mapping = {"dqn": DQNContext}
