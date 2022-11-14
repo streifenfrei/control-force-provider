@@ -199,7 +199,7 @@ class RLContext(ABC):
         self.max_force = float(max_force)
         self.output_dir = output_directory
         self.save_file = os.path.join(self.output_dir, "save.pt")
-        self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"))
+        self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"), max_queue=10000, flush_secs=10)
         self.episode_accumulators = defaultdict(RLContext.Accumulator)
         self.reward_function = reward_function
         self.state_augmenter = state_augmenter
