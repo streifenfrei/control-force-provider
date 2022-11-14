@@ -272,6 +272,7 @@ class RLContext(ABC):
                     self.episode_accumulators[key].reset()
                 self.summary_writer.add_scalar("steps_per_episode", self.epoch - self.episode_start, self.episode)
                 self.episode += 1
+                self.save()
             self.goal = goal
             self.episode_start = self.epoch
             self.last_state_dict = None
