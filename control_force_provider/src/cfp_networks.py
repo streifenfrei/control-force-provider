@@ -1,6 +1,7 @@
 import os.path
 import random
 import re
+import rospy
 import torch
 import torch.nn as nn
 import numpy as np
@@ -177,7 +178,6 @@ class RLContext(ABC):
                  action_dim,
                  discount_factor,
                  batch_size,
-                 updates_per_step,
                  max_force,
                  reward_function,
                  state_augmenter,
@@ -196,7 +196,6 @@ class RLContext(ABC):
         self.action_dim = action_dim
         self.discount_factor = discount_factor
         self.batch_size = batch_size
-        self.updates_per_step = updates_per_step
         self.max_force = float(max_force)
         self.output_dir = output_directory
         self.save_file = os.path.join(self.output_dir, "save.pt")
@@ -211,6 +210,8 @@ class RLContext(ABC):
         self.episode_start = 0
         self.goal = None
         self.episode_timeout = int(episode_timeout * 1000 / interval_duration)
+        self.stop_update = False
+        self.thread_executor = futures.ThreadPoolExecutor()
         self.rng = np.random.default_rng()
         self.exploration_angle_sigma = exploration_angle_sigma
         self.exploration_rot_axis = None
@@ -289,13 +290,12 @@ class RLContext(ABC):
         self._update_impl(state_dict, reward)
         self.last_state_dict = state_dict
         if np.any(np.isnan(self.action)):
-            print("RL update yielded NaNs.")
+            rospy.loginfo("RL update yielded NaNs.")
             return self.action
         # check for timeout
         if self.epoch - self.episode_start > self.episode_timeout:
             self.action = state_dict["goal"][:3] - state_dict["robot_position"][:3]
             self.action = self.action / np.linalg.norm(self.action) * self.max_force
-            print("Episode timeout.")
             return self.action
         # exploration
         if self.exploration_index == 0 or self.exploration_rot_axis is None:
@@ -371,7 +371,7 @@ class DQNContext(RLContext):
     def _update_thread(self):
         batch_size = min(len(self.replay_buffer), self.batch_size)
         if batch_size >= 2:
-            for i in range(self.updates_per_step):
+            while not self.stop_update:
                 batch = Transition(*zip(*self.replay_buffer.sample(batch_size)))
                 state_batch = torch.tensor(self.state_augmenter(np.stack(batch.state)), dtype=torch.float32).to(device)
                 velocity_batch = torch.tensor(np.stack(batch.velocity), dtype=torch.float32).to(device)
@@ -408,6 +408,7 @@ class DQNContext(RLContext):
         if reward is not None:
             self.replay_buffer.push(self.last_state_dict["state"], state_dict["robot_velocity"][:3], self.action, state_dict["state"], reward)
         if self.update_future is not None:
+            self.stop_update = True
             self.update_future.result()
         if self.epoch % self.target_network_update_rate == 0:
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
@@ -415,8 +416,8 @@ class DQNContext(RLContext):
         with torch.no_grad():
             self.action = self.dqn_policy(torch.tensor(state_dict["state"], dtype=torch.float32).unsqueeze(0).to(device))[0].squeeze(0).cpu().numpy()
         self.dqn_policy.train()
-        with futures.ThreadPoolExecutor() as ex:
-            self.update_future = ex.submit(self._update_thread)
+        self.stop_update = False
+        self.update_future = self.thread_executor.submit(self._update_thread)
 
 
 context_mapping = {"dqn": DQNContext}
