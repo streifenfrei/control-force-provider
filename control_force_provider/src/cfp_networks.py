@@ -181,6 +181,8 @@ class RLContext(ABC):
                  reward_function,
                  state_augmenter,
                  output_directory,
+                 interval_duration,
+                 episode_timeout,
                  exploration_angle_sigma,
                  exploration_bb_rep_p,
                  exploration_magnitude_sigma,
@@ -207,6 +209,7 @@ class RLContext(ABC):
         self.episode = 0
         self.episode_start = 0
         self.goal = None
+        self.episode_timeout = int(episode_timeout * 1000 / interval_duration)
         self.rng = np.random.default_rng()
         self.exploration_angle_sigma = exploration_angle_sigma
         self.exploration_rot_axis = None
@@ -216,7 +219,7 @@ class RLContext(ABC):
         self.exploration_magnitude_sigma = exploration_magnitude_sigma
         self.exploration_magnitude = 0
         self.exploration_decay = exploration_decay
-        self.exploration_duration = exploration_duration
+        self.exploration_duration = int(exploration_duration * 1000 / interval_duration)
         self.exploration_index = 0
         self.dot_loss_factor = dot_loss_factor
         self.dot_loss_decay = dot_loss_decay
@@ -284,6 +287,12 @@ class RLContext(ABC):
             self.episode_accumulators["reward/per_episode/goal"].update_state(goal_reward)
         self._update_impl(state_dict, reward)
         self.last_state_dict = state_dict
+        # check for timeout
+        if self.epoch - self.episode_start > self.episode_timeout:
+            self.action = state_dict["goal"][:3] - state_dict["robot_position"][:3]
+            self.action = self.action / np.linalg.norm(self.action) * self.max_force
+            print("Episode timeout.")
+            return self.action
         # exploration
         if self.exploration_index == 0 or self.exploration_rot_axis is None:
             self.exploration_rot_axis = self.rng.multivariate_normal(np.zeros(3), np.identity(3))
