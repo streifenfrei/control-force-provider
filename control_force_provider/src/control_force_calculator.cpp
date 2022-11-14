@@ -350,10 +350,16 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
           setGoal(episode_context_.getGoal());
           initializing_episode = false;
         } else {
-          episode_context_.generateEpisode();
-          setGoal(episode_context_.getStart());
-          initializing_episode = true;
+          goal_delay_count++;
+          if (goal_delay_count >= goal_delay) {
+            episode_context_.generateEpisode();
+            setGoal(episode_context_.getStart());
+            initializing_episode = true;
+            goal_delay_count = 0;
+          }
         }
+      } else {
+        goal_delay_count = 0;
       }
       current_force_ = initializing_episode ? goal_vector * transition_smoothness : getAction();
     } else {
