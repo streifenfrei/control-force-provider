@@ -9,6 +9,7 @@
 
 using namespace std::string_literals;
 using namespace boost;
+using namespace control_force_provider;
 
 const char* socket_file = "/tmp/cfp_uds";
 const int vector_size = 4 * sizeof(double);
@@ -34,36 +35,40 @@ bool setRealtimePriority() {
 #endif
 
 int main(int argc, char* argv[]) {
-
   bool detached = argc >= 2 && std::string(argv[1]) == "-d";
-  control_force_provider::ControlForceProvider cfp;
-  asio::io_context io_context_{};
-  remove(socket_file);
-  asio::local::stream_protocol::endpoint uds_ep_{socket_file};
-  asio::local::stream_protocol::acceptor acceptor(io_context_, uds_ep_);
-  asio::local::stream_protocol::socket uds_socket_{io_context_};
-  acceptor.accept(uds_socket_);
-  void* data = malloc(vector_size);
-  asio::mutable_buffer input_buffer(data, vector_size);
-#ifdef REALTIME
-  if (setRealtimePriority()) ROS_INFO_STREAM_NAMED("control_force_provider/service", "Successfully set realtime priority for current thread.");
-#endif
+  if (detached) Time::setType<ManualTime>();
+  ControlForceProvider cfp;
   signal(SIGINT, sigint_handler);
-  boost::shared_ptr<control_force_provider::SimulatedRobot> robot;
-  if (detached) robot = boost::make_shared<control_force_provider::SimulatedRobot>(cfp.getRCM(), Eigen::Vector4d(0.3, 0.0, 0.3, 0.0), cfp);
-  while (!stop) {
-    if (uds_socket_.available() >= vector_size) {
-      Eigen::Vector4d force = Eigen::Vector4d::Zero();
-      read(uds_socket_, input_buffer);
-      if (detached) {
-        robot->update();
-      } else {
+  if (detached) {
+    cfp.setRCM(Eigen::Vector3d(0.3, 0, 0.45));
+    boost::shared_ptr<ManualTime> time = boost::dynamic_pointer_cast<ManualTime>(Time::getInstance());
+    boost::shared_ptr<SimulatedRobot> robot = boost::make_shared<SimulatedRobot>(cfp.getRCM(), Eigen::Vector4d(0.3, 0.0, 0.3, 0.0), cfp);
+    while (!stop) {
+      robot->update();
+      *time += 0.001;
+    }
+  } else {
+    asio::io_context io_context_{};
+    remove(socket_file);
+    asio::local::stream_protocol::endpoint uds_ep_{socket_file};
+    asio::local::stream_protocol::acceptor acceptor(io_context_, uds_ep_);
+    asio::local::stream_protocol::socket uds_socket_{io_context_};
+    acceptor.accept(uds_socket_);
+    void* data = malloc(vector_size);
+    asio::mutable_buffer input_buffer(data, vector_size);
+#ifdef REALTIME
+    if (setRealtimePriority()) ROS_INFO_STREAM_NAMED("control_force_provider/service", "Successfully set realtime priority for current thread.");
+#endif
+    while (!stop) {
+      if (uds_socket_.available() >= vector_size) {
+        Eigen::Vector4d force = Eigen::Vector4d::Zero();
+        read(uds_socket_, input_buffer);
         Eigen::Vector4d ee_position((double*)input_buffer.data());
         cfp.getForce(force, ee_position);
+        write(uds_socket_, asio::const_buffer((const void*)force.data(), vector_size));
       }
-      write(uds_socket_, asio::const_buffer((const void*)force.data(), vector_size));
     }
+    remove(socket_file);
+    free(data);
   }
-  remove(socket_file);
-  free(data);
 }

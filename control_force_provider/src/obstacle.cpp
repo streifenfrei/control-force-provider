@@ -12,12 +12,12 @@ using namespace Eigen;
 using namespace control_force_provider::utils;
 namespace control_force_provider::backend {
 void Obstacle::reset(double offset) {
-  ros::Time now = ros::Time::now();
-  offset = std::min(offset, now.toSec());
-  start_time = ros::Time::now() - ros::Duration(offset);
+  double now = Time::now();
+  offset = std::min(offset, now);
+  start_time = Time::now() - offset;
 }
 
-Vector4d Obstacle::getPosition() { return getPositionAt(ros::Time(0) + (ros::Time::now() - start_time)); }
+Vector4d Obstacle::getPosition() { return getPositionAt((Time::now() - start_time)); }
 
 WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string& id) : Obstacle(id), speed_(getConfigValue<double>(config, "speed")[0]) {
   std::vector<double> waypoints_raw = getConfigValue<double>(config, "waypoints");
@@ -41,8 +41,8 @@ WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string
   setRCM({rcm_raw[0], rcm_raw[1], rcm_raw[2]});
 }
 
-Vector4d WaypointsObstacle::getPositionAt(const ros::Time& ros_time) {
-  double time = fmod(ros_time.toSec(), total_duration_);
+Vector4d WaypointsObstacle::getPositionAt(double time) {
+  time = fmod(time, total_duration_);
   unsigned int segment;
   double duration_sum = 0;
   for (size_t i = 0; i < segments_durations_.size(); i++) {
@@ -66,13 +66,12 @@ void FramesObstacle::setFrames(std::map<double, Affine3d> frames) {
   iter_ = frames_.begin();
 }
 
-Vector4d FramesObstacle::getPositionAt(const ros::Time& ros_time) {
-  double seconds = ros_time.toSec();
+Vector4d FramesObstacle::getPositionAt(double time) {
   auto start_iter = iter_;
   do {
     auto current_iter = iter_++;
     if (iter_ == frames_.end()) {
-      if (current_iter->first < seconds) {  // reached end
+      if (current_iter->first < time) {  // reached end
         iter_--;
         const Vector3d& out = current_iter->second.translation();
         return Vector4d(out[0], out[1], out[2], 0);
@@ -83,12 +82,12 @@ Vector4d FramesObstacle::getPositionAt(const ros::Time& ros_time) {
     auto next_iter = iter_;
     const double& t1 = current_iter->first;
     const double& t2 = next_iter->first;
-    if (t1 < seconds && t2 > seconds) {
+    if (t1 < time && t2 > time) {
       const Vector3d& p1 = current_iter->second.translation();
       const Vector3d& p2 = next_iter->second.translation();
       iter_--;
       // linear interpolation
-      const Vector3d& out = p1 + (((seconds - t1) / (t2 - t1)) * (p2 - p1));
+      const Vector3d& out = p1 + (((time - t1) / (t2 - t1)) * (p2 - p1));
       return Vector4d(out[0], out[1], out[2], 0);
     }
   } while (iter_ != start_iter);

@@ -167,7 +167,7 @@ class RLContext(ABC):
             self.count += 1
 
         def get_value(self):
-            return self.state / self.count
+            return 0 if self.count == 0 else self.state / self.count
 
         def reset(self):
             self.state = 0

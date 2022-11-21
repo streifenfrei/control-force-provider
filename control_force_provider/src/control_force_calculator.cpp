@@ -49,7 +49,7 @@ void ControlForceCalculator::getForce(Vector4d& force, const Vector4d& ee_positi
     ee_position = ee_position_off;
     Quaterniond ee_rot = utils::zRotation(rcm - offset_, ee_position.head(3));
     ee_rotation = {ee_rot.x(), ee_rot.y(), ee_rot.z(), ee_rot.w()};
-    elapsed_time = (ros::Time::now() - start_time).toSec();
+    elapsed_time = Time::now() - start_time;
     for (size_t i = 0; i < obstacles.size(); i++) {
       Vector4d new_ob_position = obstacles[i]->getPosition();
       new_ob_position.head(3) -= offset_;
@@ -275,13 +275,13 @@ void EpisodeContext::startEpisode() {
 ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config,
                                                        ros::NodeHandle& node_handle, const std::string& data_path)
     : ControlForceCalculator(std::move(obstacles_), config, data_path),
-      interval_duration_(ros::Duration(utils::getConfigValue<double>(config["rl"], "interval_duration")[0] * 10e-4)),
+      interval_duration_(utils::getConfigValue<double>(config["rl"], "interval_duration")[0] * 10e-4),
       goal_reached_threshold_distance_(utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0]),
       episode_context_(obstacles, obstacle_loader_, config["rl"]),
       train(utils::getConfigValue<bool>(config["rl"], "train")[0]),
       rcm_origin_(utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]),
       output_dir(utils::getConfigValue<std::string>(config["rl"], "output_directory")[0]),
-      last_calculation_(ros::Time::now()) {
+      last_calculation_(Time::now()) {
   if (rcm_origin_) setOffset(rcm);
   state_provider = boost::make_shared<StateProvider>(*this, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0]);
   calculation_future_ = calculation_promise_.get_future();
@@ -339,7 +339,7 @@ void ReinforcementLearningAgent::getForceImpl(Vector4d& force) {
     force = current_force_;
     return;
   }
-  ros::Time now = ros::Time::now();
+  double now = Time::now();
   if (now - last_calculation_ > interval_duration_) {
     if (train) {
       Vector4d goal_vector = goal - ee_position;

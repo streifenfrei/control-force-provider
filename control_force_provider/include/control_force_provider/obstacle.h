@@ -8,18 +8,20 @@
 #include <boost/shared_ptr.hpp>
 #include <vector>
 
+#include "time.h"
+
 namespace control_force_provider::backend {
 class Obstacle {
  private:
-  ros::Time start_time;
+  double start_time;
 
  protected:
   const std::string id_;
   Eigen::Vector3d rcm_;
-  virtual Eigen::Vector4d getPositionAt(const ros::Time& ros_time) = 0;
+  virtual Eigen::Vector4d getPositionAt(double time) = 0;
 
  public:
-  Obstacle(const std::string& id) : start_time(ros::Time::now()), id_(id), rcm_(Eigen::Vector3d::Zero()){};
+  Obstacle(const std::string& id) : start_time(Time::now()), id_(id), rcm_(Eigen::Vector3d::Zero()){};
   void reset(double offset = 0);
   Eigen::Vector4d getPosition();
   virtual ~Obstacle() = default;
@@ -30,7 +32,7 @@ class Obstacle {
 
 class DummyObstacle : public Obstacle {
  protected:
-  Eigen::Vector4d getPositionAt(const ros::Time& ros_time) override { return Eigen::Vector4d::Zero(); };
+  Eigen::Vector4d getPositionAt(double time) override { return Eigen::Vector4d::Zero(); };
 
  public:
   explicit DummyObstacle(const std::string& id) : Obstacle(id) { rcm_ = Eigen::Vector3d::Zero(); };
@@ -47,7 +49,7 @@ class WaypointsObstacle : public Obstacle {
   double speed_;  // m/s
 
  protected:
-  Eigen::Vector4d getPositionAt(const ros::Time& ros_time) override;
+  Eigen::Vector4d getPositionAt(double time) override;
 
  public:
   WaypointsObstacle(const YAML::Node& config, const std::string& id);
@@ -60,7 +62,7 @@ class FramesObstacle : public Obstacle {
   std::map<double, Eigen::Affine3d>::iterator iter_;
 
  protected:
-  Eigen::Vector4d getPositionAt(const ros::Time& ros_time) override;
+  Eigen::Vector4d getPositionAt(double time) override;
 
  public:
   explicit FramesObstacle(const std::string& id);
