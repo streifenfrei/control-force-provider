@@ -255,6 +255,8 @@ class RLContext(ABC):
                       "exploration_angle_sigma": self.exploration_angle_sigma,
                       "exploration_bb_rep_p": self.exploration_bb_rep_p,
                       "exploration_magnitude_sigma": self.exploration_magnitude_sigma}
+        if os.path.exists(self.save_file):
+            os.rename(self.save_file, f"{self.save_file}_old")
         torch.save(state_dict, self.save_file)
 
     def load(self):
