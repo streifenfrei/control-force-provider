@@ -287,7 +287,9 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared
   calculation_future_ = calculation_promise_.get_future();
   calculation_promise_.set_value(Vector4d::Zero());
   if (train) {
-    training_service_client = boost::make_shared<ros::ServiceClient>(node_handle.serviceClient<control_force_provider_msgs::UpdateNetwork>("update_network"));
+    ros::service::waitForService("update_network");
+    training_service_client =
+        boost::make_shared<ros::ServiceClient>(node_handle.serviceClient<control_force_provider_msgs::UpdateNetwork>("update_network", true));
   }
   episode_context_.generateEpisode();
   setGoal(episode_context_.getStart());
@@ -389,4 +391,10 @@ DeepQNetworkAgent::DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> ob
     : ReinforcementLearningAgent(std::move(obstacles_), config, node_handle, data_path) {}
 
 torch::Tensor DeepQNetworkAgent::getActionInference(torch::Tensor& state) {}
+
+MonteCarloAgent::MonteCarloAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle,
+                                 const std::string& data_path)
+    : ReinforcementLearningAgent(std::move(obstacles_), config, node_handle, data_path) {}
+
+torch::Tensor MonteCarloAgent::getActionInference(torch::Tensor& state) { return torch::Tensor(); }
 }  // namespace control_force_provider::backend

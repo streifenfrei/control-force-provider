@@ -52,6 +52,9 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
     if (rl_type == "dqn") {
       control_force_calculator_ =
           boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<DeepQNetworkAgent>(obstacles, *config_, node_handle_, data_path));
+    } else if (rl_type == "mc") {
+      control_force_calculator_ =
+          boost::static_pointer_cast<ControlForceCalculator>(boost::make_shared<MonteCarloAgent>(obstacles, *config_, node_handle_, data_path));
     } else
       throw ConfigError("Unknown RL type '" + rl_type + "'");
   } else

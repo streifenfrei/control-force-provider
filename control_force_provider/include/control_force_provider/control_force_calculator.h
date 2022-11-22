@@ -182,4 +182,12 @@ class DeepQNetworkAgent : public ReinforcementLearningAgent {
  public:
   DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle, const std::string& data_path);
 };
+
+class MonteCarloAgent : public ReinforcementLearningAgent {
+ protected:
+  torch::Tensor getActionInference(torch::Tensor& state) override;
+
+ public:
+  MonteCarloAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle, const std::string& data_path);
+};
 }  // namespace control_force_provider::backend
