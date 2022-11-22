@@ -13,6 +13,7 @@
 
 #include "control_force_provider_msgs/UpdateNetwork.h"
 #include "obstacle.h"
+#include "time.h"
 
 namespace control_force_provider::backend {
 class ControlForceCalculator {
@@ -31,7 +32,7 @@ class ControlForceCalculator {
   Eigen::Vector4d ee_velocity;
   Eigen::Vector3d rcm;
   Eigen::Vector4d goal;
-  ros::Time start_time;
+  double start_time;
   double elapsed_time = 0;
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
   boost::shared_ptr<ObstacleLoader> obstacle_loader_;
@@ -67,7 +68,7 @@ class ControlForceCalculator {
     goal_available_ = true;
     goal = goal_;
     goal.head(3) -= offset_;
-    start_time = ros::Time::now();
+    start_time = Time::now();
   };
 };
 
@@ -145,13 +146,13 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   const inline static double transition_smoothness = 0.001;
   const inline static unsigned int goal_delay = 10;
   const bool train;
-  const ros::Duration interval_duration_;
+  const double interval_duration_;
   const double goal_reached_threshold_distance_;
   const bool rcm_origin_;
   EpisodeContext episode_context_;
   bool initializing_episode = true;
   Eigen::Vector4d current_force_;
-  ros::Time last_calculation_;
+  double last_calculation_;
   boost::future<Eigen::Vector4d> calculation_future_;
   boost::promise<Eigen::Vector4d> calculation_promise_;
   unsigned int goal_delay_count = 0;
@@ -180,5 +181,13 @@ class DeepQNetworkAgent : public ReinforcementLearningAgent {
 
  public:
   DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle, const std::string& data_path);
+};
+
+class MonteCarloAgent : public ReinforcementLearningAgent {
+ protected:
+  torch::Tensor getActionInference(torch::Tensor& state) override;
+
+ public:
+  MonteCarloAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle, const std::string& data_path);
 };
 }  // namespace control_force_provider::backend

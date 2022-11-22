@@ -36,6 +36,7 @@ add_library(
         src/control_force_provider.cpp
         src/control_force_calculator.cpp
         src/obstacle.cpp
+        src/time.cpp
         src/visualizer.cpp
         src/utils.cpp)
 
