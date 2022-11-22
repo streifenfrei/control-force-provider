@@ -1,0 +1,58 @@
+#! /usr/bin/env python
+
+import rospy
+import yaml
+import signal
+import re
+from functools import reduce
+from control_force_provider_msgs.srv import UpdateNetwork, UpdateNetworkResponse
+
+rl_context = None
+action_dim = 3
+
+
+def service_handle(request):
+    state_dict = {}
+    for field in request.__slots__:
+        state_dict[field] = getattr(request, field)
+    action = rl_context.update(state_dict).tolist()
+    action.append(0)
+    return UpdateNetworkResponse(action)
+
+
+def signal_handle(sig, frame):
+    if rl_context is not None:
+        rl_context.save()
+
+
+def main():
+    global rl_context
+    config = rospy.get_param("control_force_provider/config")
+    with open(config, "r") as f:
+        config = yaml.safe_load(f)
+    if config["algorithm"] != "rl" or not config["rl"]["train"]:
+        return
+    num_obstacles = 0
+    non_obstacles_keys = ["data"]
+    for key in config["obstacles"]:
+        if key not in non_obstacles_keys:
+            num_obstacles += 1
+    for key in ["max_force", "workspace_bb"]:
+        config["rl"][key] = config[key]
+    config = config["rl"]
+    import cfp_networks
+    state_augmenter = cfp_networks.StateAugmenter(config["state_pattern"], num_obstacles, **config["state_augmenter"])
+    config["state_dim"] = reduce(lambda x, y: x + y, (x[1] for x in state_augmenter.mapping.values()))
+    config["action_dim"] = action_dim
+    config["reward_function"] = cfp_networks.RewardFunction(fmax=config["max_force"], interval_duration=config["interval_duration"], dg=config["goal_reached_threshold_distance"], **config["reward_function"])
+    config["state_augmenter"] = state_augmenter
+    rl_context = cfp_networks.context_mapping[config["type"]](**config, **config[config["type"]])
+    rl_context.load()
+    rospy.init_node("rl_training", anonymous=True)
+    signal.signal(signal.SIGINT, signal_handle)
+
+    rospy.Service("update_network", UpdateNetwork, service_handle)
+    rospy.spin()
+
+
+if __name__ == '__main__': main()
