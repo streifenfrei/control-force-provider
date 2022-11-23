@@ -287,9 +287,7 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared
   calculation_future_ = calculation_promise_.get_future();
   calculation_promise_.set_value(Vector4d::Zero());
   if (train) {
-    ros::service::waitForService("update_network");
-    training_service_client =
-        boost::make_shared<ros::ServiceClient>(node_handle.serviceClient<control_force_provider_msgs::UpdateNetwork>("update_network", true));
+    training_service_client = boost::make_shared<ros::ServiceClient>(node_handle.serviceClient<control_force_provider_msgs::UpdateNetwork>("update_network"));
   }
   episode_context_.generateEpisode();
   setGoal(episode_context_.getStart());

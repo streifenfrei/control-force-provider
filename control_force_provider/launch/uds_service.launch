@@ -8,6 +8,8 @@
     <arg name="remote_user" default=""/>
     <arg name="remote_env" default=""/>
 
+    <node pkg="rostopic" type="rostopic" name="rostopic" args="pub /control_force_provider/goal geometry_msgs/Point -- $(arg goal)"/>
+
     <param name="control_force_provider/config" value="$(arg config)" type="str"/>
     <node pkg="control_force_provider"
           type="uds_service"

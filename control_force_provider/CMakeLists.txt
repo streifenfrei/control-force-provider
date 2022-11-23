@@ -62,9 +62,9 @@ target_link_libraries(core PUBLIC ${PROJECT_NAME})
 set_target_properties(core PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION})
 
 # EXECUTABLES
-add_executable(service src/uds_service.cpp)
+add_executable(uds_service src/uds_service.cpp)
 if (RT)
-    target_compile_definitions(service PUBLIC REALTIME)
+    target_compile_definitions(uds_service PUBLIC REALTIME)
 endif ()
-target_link_libraries(service ${PROJECT_NAME})
+target_link_libraries(uds_service ${PROJECT_NAME})
 catkin_install_python(PROGRAMS scripts/rl_training DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
