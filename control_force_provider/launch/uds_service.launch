@@ -1,7 +1,6 @@
 <?xml version="1.0"?>
 <launch>
     <arg name="config" default="$(find control_force_provider)/default.config"/>
-    <arg name="detached" default="true"/>
     <arg name="rviz" default="false"/>
     <arg name="goal" default="0.3 0.0 0.3"/>
     <arg name="remote" default="false"/>
@@ -11,9 +10,8 @@
 
     <param name="control_force_provider/config" value="$(arg config)" type="str"/>
     <node pkg="control_force_provider"
-          type="service"
+          type="uds_service"
           name="control_force_provider"
-          args="$(eval '-d' if arg('detached') else '')"
           respawn="false" output="screen"/>
 
     <machine name="remote"
@@ -25,6 +23,7 @@
           machine="$(eval 'remote' if arg('remote_address') != '' else '')"
           type="rl_training"
           name="rl_training"
+          args="-s"
           respawn="false" output="screen"/>
 
     <node pkg="rviz" type="rviz" output="screen" name="rviz" args="-d $(find control_force_provider)/launch/rviz/description.rviz" if="$(arg rviz)"/>

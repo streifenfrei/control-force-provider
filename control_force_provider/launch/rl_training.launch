@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="config" default="$(find control_force_provider)/default.config"/>
+
+    <param name="control_force_provider/config" value="$(arg config)" type="str"/>
+
+    <node pkg="control_force_provider"
+          type="rl_training"
+          name="rl_training"
+          respawn="false" output="screen"/>
+</launch>

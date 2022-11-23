@@ -3,7 +3,7 @@
 import rospy
 import yaml
 import signal
-import re
+from argparse import ArgumentParser
 from functools import reduce
 from control_force_provider_msgs.srv import UpdateNetwork, UpdateNetworkResponse
 
@@ -25,13 +25,8 @@ def signal_handle(sig, frame):
         rl_context.save()
 
 
-def main():
+def load_context(config):
     global rl_context
-    config = rospy.get_param("control_force_provider/config")
-    with open(config, "r") as f:
-        config = yaml.safe_load(f)
-    if config["algorithm"] != "rl" or not config["rl"]["train"]:
-        return
     num_obstacles = 0
     non_obstacles_keys = ["data"]
     for key in config["obstacles"]:
@@ -48,11 +43,24 @@ def main():
     config["state_augmenter"] = state_augmenter
     rl_context = rl.context_mapping[config["type"]](**config, **config[config["type"]])
     rl_context.load()
+
+
+def main():
+    arg_parser = ArgumentParser()
+    arg_parser.add_argument("-s", "--service", action="store_true")
+    args, _ = arg_parser.parse_known_args()
+    config = rospy.get_param("control_force_provider/config")
+    with open(config, "r") as f:
+        config = yaml.safe_load(f)
+    if config["algorithm"] != "rl" or not config["rl"]["train"]:
+        return
+    load_context(config)
     rospy.init_node("rl_training", anonymous=True)
     signal.signal(signal.SIGINT, signal_handle)
 
-    rospy.Service("update_network", UpdateNetwork, service_handle)
-    rospy.spin()
+    if args.service:
+        rospy.Service("update_network", UpdateNetwork, service_handle)
+        rospy.spin()
 
 
 if __name__ == '__main__': main()

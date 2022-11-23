@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(RT "use realtime threads" OFF)
 
+# SETUP
 find_package(
         catkin REQUIRED COMPONENTS
         geometry_msgs
@@ -16,6 +17,7 @@ find_package(
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(Torch REQUIRED)
+find_package(pybind11 REQUIRED)
 set(CMAKE_CXX_FLAGS ${TORCH_CXX_FLAGS})
 
 catkin_python_setup()
@@ -31,6 +33,7 @@ catkin_package(
         control_force_provider_msgs
         roscpp)
 
+# MAIN LIBRARY
 add_library(
         ${PROJECT_NAME}
         src/control_force_provider.cpp
@@ -51,16 +54,17 @@ target_include_directories(
         ${PROJECT_NAME} PUBLIC
         include
         ${catkin_INCLUDE_DIRS})
-if (RT)
-    target_compile_definitions(${PROJECT_NAME} PUBLIC REALTIME)
-endif()
 
-add_executable(service src/service.cpp)
-if (RT)
-    target_compile_definitions(${PROJECT_NAME} PUBLIC REALTIME)
-endif()
 
+# PYTHON CORE BINDING
+pybind11_add_module(core src/python.cpp)
+target_link_libraries(core PUBLIC ${PROJECT_NAME})
+set_target_properties(core PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION})
+
+# EXECUTABLES
+add_executable(service src/uds_service.cpp)
+if (RT)
+    target_compile_definitions(service PUBLIC REALTIME)
+endif ()
 target_link_libraries(service ${PROJECT_NAME})
-
-catkin_install_python(PROGRAMS scripts/rl_training
-        DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+catkin_install_python(PROGRAMS scripts/rl_training DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
