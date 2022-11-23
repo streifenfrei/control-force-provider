@@ -40,13 +40,13 @@ def main():
     for key in ["max_force", "workspace_bb"]:
         config["rl"][key] = config[key]
     config = config["rl"]
-    import cfp_networks
-    state_augmenter = cfp_networks.StateAugmenter(config["state_pattern"], num_obstacles, **config["state_augmenter"])
+    import control_force_provider.rl as rl
+    state_augmenter = rl.StateAugmenter(config["state_pattern"], num_obstacles, **config["state_augmenter"])
     config["state_dim"] = reduce(lambda x, y: x + y, (x[1] for x in state_augmenter.mapping.values()))
     config["action_dim"] = action_dim
-    config["reward_function"] = cfp_networks.RewardFunction(fmax=config["max_force"], interval_duration=config["interval_duration"], dg=config["goal_reached_threshold_distance"], **config["reward_function"])
+    config["reward_function"] = rl.RewardFunction(fmax=config["max_force"], interval_duration=config["interval_duration"], dg=config["goal_reached_threshold_distance"], **config["reward_function"])
     config["state_augmenter"] = state_augmenter
-    rl_context = cfp_networks.context_mapping[config["type"]](**config, **config[config["type"]])
+    rl_context = rl.context_mapping[config["type"]](**config, **config[config["type"]])
     rl_context.load()
     rospy.init_node("rl_training", anonymous=True)
     signal.signal(signal.SIGINT, signal_handle)
