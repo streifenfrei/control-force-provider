@@ -3,6 +3,7 @@
 #include <geometry_msgs/Point.h>
 #include <geometry_msgs/PointStamped.h>
 #include <ros/ros.h>
+#include <torch/torch.h>
 #include <yaml-cpp/yaml.h>
 
 #include <Eigen/Dense>

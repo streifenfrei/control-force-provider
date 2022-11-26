@@ -24,8 +24,8 @@ class ControlForceCalculator {
   bool goal_available_ = false;
 
  protected:
-  Eigen::Vector3d workspace_bb_origin_;
-  const Eigen::Vector3d workspace_bb_dims_;
+  torch::Tensor workspace_bb_origin_;
+  const torch::Tensor workspace_bb_dims_;
   const double max_force_;
   Eigen::Vector4d ee_position;
   Eigen::Vector4d ee_rotation;
@@ -126,10 +126,10 @@ class EpisodeContext {
   std::vector<boost::shared_ptr<Obstacle>>& obstacles_;
   boost::shared_ptr<ObstacleLoader>& obstacle_loader_;
   boost::random::mt19937 rng_;
-  const Eigen::Vector3d start_bb_origin;
-  const Eigen::Vector3d start_bb_dims;
-  const Eigen::Vector3d goal_bb_origin;
-  const Eigen::Vector3d goal_bb_dims;
+  const torch::Tensor start_bb_origin;
+  const torch::Tensor start_bb_dims;
+  const torch::Tensor goal_bb_origin;
+  const torch::Tensor goal_bb_dims;
   double begin_max_offset_;
   friend class Visualizer;
 

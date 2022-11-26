@@ -1,5 +1,6 @@
 #pragma once
 
+#include <torch/torch.h>
 #include <yaml-cpp/yaml.h>
 
 #include <Eigen/Dense>
@@ -27,6 +28,8 @@ class PythonError : Error {
 namespace utils {
 using namespace exceptions;
 
+torch::TensorOptions getTensorOptions();
+
 template <typename T>
 std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) {
   YAML::Node node = config[key];
@@ -52,7 +55,7 @@ std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) 
 
 std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str);
 
-Eigen::Vector3d vectorFromList(const std::vector<double> &list, unsigned int start_index);
+torch::Tensor tensorFromList(const std::vector<double> &list, unsigned int start_index);
 
 std::string readFile(const std::string &file);
 

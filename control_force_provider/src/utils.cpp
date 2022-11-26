@@ -21,6 +21,8 @@ namespace utils {
 using namespace exceptions;
 using namespace Eigen;
 
+torch::TensorOptions getTensorOptions() { return torch::TensorOptions().dtype(torch::kFloat64).device(torch::kCPU).requires_grad(false); }
+
 std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str) {
   boost::sregex_token_iterator iter(str.begin(), str.end(), boost::regex(regex), 0);
   boost::sregex_token_iterator end;
@@ -29,8 +31,13 @@ std::vector<std::string> regexFindAll(const std::string &regex, const std::strin
   return result;
 }
 
-Vector3d vectorFromList(const std::vector<double> &list, unsigned int start_index) {
-  return Vector3d(list[start_index], list[start_index + 1], list[start_index + 2]);
+torch::Tensor tensorFromList(const std::vector<double> &list, unsigned int start_index) {
+  torch::Tensor out = torch::empty(3, getTensorOptions());
+  auto accessor = out.accessor<double, 1>();
+  accessor[0] = list[start_index];
+  accessor[1] = list[start_index + 1];
+  accessor[2] = list[start_index + 2];
+  return out;
 }
 
 std::string readFile(const std::string &file) {

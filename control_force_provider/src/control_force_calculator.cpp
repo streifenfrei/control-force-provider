@@ -13,8 +13,8 @@ namespace control_force_provider::backend {
 ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path)
     : obstacles(std::move(obstacles_)),
       rcm(Vector3d::Zero()),
-      workspace_bb_origin_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 0)),
-      workspace_bb_dims_(utils::vectorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 3)),
+      workspace_bb_origin_(utils::tensorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 0)),
+      workspace_bb_dims_(utils::tensorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 3)),
       max_force_(utils::getConfigValue<double>(config, "max_force")[0]),
       offset_(Vector3d::Zero()) {
   std::vector<boost::shared_ptr<FramesObstacle>> frames_obstacles;
@@ -66,12 +66,14 @@ void ControlForceCalculator::getForce(Vector4d& force, const Vector4d& ee_positi
   Vector4d next_pos = ee_position + force;
   double distance_to_wall = INFINITY;
   double next_distance_to_wall = INFINITY;
+  auto workspace_bb_origin_acc = workspace_bb_origin_.accessor<double, 1>();
+  auto workspace_bb_dims_acc = workspace_bb_dims_.accessor<double, 1>();
   for (size_t i = 0; i < 3; i++) {
-    distance_to_wall = std::min(distance_to_wall, ee_position[i] - workspace_bb_origin_[i]);
-    distance_to_wall = std::min(distance_to_wall, workspace_bb_origin_[i] + workspace_bb_dims_[i] - ee_position[i]);
-    next_distance_to_wall = std::min(next_distance_to_wall, next_pos[i] - workspace_bb_origin_[i]);
-    next_distance_to_wall = std::min(next_distance_to_wall, workspace_bb_origin_[i] + workspace_bb_dims_[i] - next_pos[i]);
-    next_pos[i] = boost::algorithm::clamp(next_pos[i], workspace_bb_origin_[i], workspace_bb_origin_[i] + workspace_bb_dims_[i]);
+    distance_to_wall = std::min(distance_to_wall, ee_position[i] - workspace_bb_origin_acc[i]);
+    distance_to_wall = std::min(distance_to_wall, workspace_bb_origin_acc[i] + workspace_bb_dims_acc[i] - ee_position[i]);
+    next_distance_to_wall = std::min(next_distance_to_wall, next_pos[i] - workspace_bb_origin_acc[i]);
+    next_distance_to_wall = std::min(next_distance_to_wall, workspace_bb_origin_acc[i] + workspace_bb_dims_acc[i] - next_pos[i]);
+    next_pos[i] = boost::algorithm::clamp(next_pos[i], workspace_bb_origin_acc[i], workspace_bb_origin_acc[i] + workspace_bb_dims_acc[i]);
   }
   if (next_distance_to_wall < distance_to_wall) {
     force = next_pos - ee_position;
@@ -102,7 +104,10 @@ void ControlForceCalculator::updateDistanceVectors() {
 
 void ControlForceCalculator::setOffset(Vector3d offset) {
   Vector3d translation = offset_ - offset;
-  workspace_bb_origin_ += translation;
+  auto workspace_bb_origin_acc = workspace_bb_origin_.accessor<double, 1>();
+  for (size_t i = 0; i < 3; i++) {
+    workspace_bb_origin_acc[i] += translation[i];
+  }
   rcm += translation;
   goal.head(3) += translation;
   offset_ = offset;
@@ -254,15 +259,19 @@ EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacl
     : obstacles_(obstacles),
       obstacle_loader_(obstacle_loader),
       begin_max_offset_(utils::getConfigValue<double>(config, "begin_max_offset")[0]),
-      start_bb_origin(utils::vectorFromList(utils::getConfigValue<double>(config, "start_bb"), 0)),
-      start_bb_dims(utils::vectorFromList(utils::getConfigValue<double>(config, "start_bb"), 3)),
-      goal_bb_origin(utils::vectorFromList(utils::getConfigValue<double>(config, "goal_bb"), 0)),
-      goal_bb_dims(utils::vectorFromList(utils::getConfigValue<double>(config, "goal_bb"), 3)) {}
+      start_bb_origin(utils::tensorFromList(utils::getConfigValue<double>(config, "start_bb"), 0)),
+      start_bb_dims(utils::tensorFromList(utils::getConfigValue<double>(config, "start_bb"), 3)),
+      goal_bb_origin(utils::tensorFromList(utils::getConfigValue<double>(config, "goal_bb"), 0)),
+      goal_bb_dims(utils::tensorFromList(utils::getConfigValue<double>(config, "goal_bb"), 3)) {}
 
 void EpisodeContext::generateEpisode() {
+  auto start_bb_origin_acc = start_bb_origin.accessor<double, 1>();
+  auto start_bb_dims_acc = start_bb_dims.accessor<double, 1>();
+  auto goal_bb_origin_acc = goal_bb_origin.accessor<double, 1>();
+  auto goal_bb_dims_acc = goal_bb_dims.accessor<double, 1>();
   for (size_t i = 0; i < 3; i++) {
-    start_[i] = boost::random::uniform_real_distribution<>(start_bb_origin[i], start_bb_origin[i] + start_bb_dims[i])(rng_);
-    goal_[i] = boost::random::uniform_real_distribution<>(goal_bb_origin[i], goal_bb_origin[i] + goal_bb_dims[i])(rng_);
+    start_[i] = boost::random::uniform_real_distribution<>(start_bb_origin_acc[i], start_bb_origin_acc[i] + start_bb_dims_acc[i])(rng_);
+    goal_[i] = boost::random::uniform_real_distribution<>(goal_bb_origin_acc[i], goal_bb_origin_acc[i] + goal_bb_dims_acc[i])(rng_);
   }
   obstacle_loader_->loadNext();
 }
@@ -317,8 +326,10 @@ Vector4d ReinforcementLearningAgent::getAction() {
       for (auto& point : points_on_l2_)
         for (size_t i = 0; i < point.size(); i++) srv.request.points_on_l2.push_back(point[i]);
       for (size_t i = 0; i < 4; i++) srv.request.goal[i] = goal[i];
-      for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_origin[i] = workspace_bb_origin_[i];
-      for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_dims[i] = workspace_bb_dims_[i];
+      auto workspace_bb_origin_acc = workspace_bb_origin_.accessor<double, 1>();
+      auto workspace_bb_dims_acc = workspace_bb_dims_.accessor<double, 1>();
+      for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_origin[i] = workspace_bb_origin_acc[i];
+      for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_dims[i] = workspace_bb_dims_acc[i];
       srv.request.elapsed_time = elapsed_time;
       if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to call training service.");
       return Vector4d(srv.response.action.data());

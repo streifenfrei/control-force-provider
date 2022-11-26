@@ -37,7 +37,11 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
         obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, id)));
       } else if (ob_type == "csv") {
         boost::shared_ptr<FramesObstacle> obstacle = boost::make_shared<FramesObstacle>(id);
-        if (ob_config["rcm"].IsDefined()) obstacle->setRCM(utils::vectorFromList(utils::getConfigValue<double>(ob_config, "rcm"), 0));
+        if (ob_config["rcm"].IsDefined()) {
+          torch::Tensor rcm = utils::tensorFromList(utils::getConfigValue<double>(ob_config, "ircm"), 0);
+          auto acc = rcm.accessor<double, 1>();
+          obstacle->setRCM(Vector3d(acc[0], acc[1], acc[2]));
+        };
         obstacles.push_back(boost::static_pointer_cast<Obstacle>(obstacle));
       } else
         throw ConfigError("Unknown obstacle type '" + ob_type + "'");
