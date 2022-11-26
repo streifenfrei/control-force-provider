@@ -3,11 +3,14 @@
 import rospy
 import yaml
 import signal
+import control_force_provider.rl as rl
+from control_force_provider.native import RLEnvironment
 from argparse import ArgumentParser
 from functools import reduce
 from control_force_provider_msgs.srv import UpdateNetwork, UpdateNetworkResponse
 
 rl_context = None
+stop = False
 action_dim = 3
 
 
@@ -21,6 +24,8 @@ def service_handle(request):
 
 
 def signal_handle(sig, frame):
+    global stop
+    stop = True
     if rl_context is not None:
         rl_context.save()
 
@@ -35,7 +40,6 @@ def load_context(config):
     for key in ["max_force", "workspace_bb"]:
         config["rl"][key] = config[key]
     config = config["rl"]
-    import control_force_provider.rl as rl
     state_augmenter = rl.StateAugmenter(config["state_pattern"], num_obstacles, **config["state_augmenter"])
     config["state_dim"] = reduce(lambda x, y: x + y, (x[1] for x in state_augmenter.mapping.values()))
     config["action_dim"] = action_dim
@@ -46,6 +50,7 @@ def load_context(config):
 
 
 def main():
+    global rl_context, stop
     arg_parser = ArgumentParser()
     arg_parser.add_argument("-s", "--service", action="store_true")
     args, _ = arg_parser.parse_known_args()
@@ -61,6 +66,11 @@ def main():
     if args.service:
         rospy.Service("update_network", UpdateNetwork, service_handle)
         rospy.spin()
-
+    else:
+        rl_environment = RLEnvironment()
+        while not stop:
+            states = rl_environment.getState()
+            actions = rl_context.update(states)
+            rl_environment.update(actions)
 
 if __name__ == '__main__': main()

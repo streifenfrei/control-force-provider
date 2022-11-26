@@ -17,8 +17,9 @@ find_package(
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(Torch REQUIRED)
+find_library(TORCH_PYTHON_LIBRARY torch_python PATHS ${TORCH_INSTALL_PREFIX}/lib)
 find_package(pybind11 REQUIRED)
-set(CMAKE_CXX_FLAGS ${TORCH_CXX_FLAGS})
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
 catkin_python_setup()
 
@@ -55,11 +56,10 @@ target_include_directories(
         include
         ${catkin_INCLUDE_DIRS})
 
-
 # PYTHON CORE BINDING
-pybind11_add_module(core src/python.cpp)
-target_link_libraries(core PUBLIC ${PROJECT_NAME})
-set_target_properties(core PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION})
+pybind11_add_module(native src/rl_environment.cpp)
+target_link_libraries(native PUBLIC ${PROJECT_NAME} torch_python)
+set_target_properties(native PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION})
 
 # EXECUTABLES
 add_executable(uds_service src/uds_service.cpp)
