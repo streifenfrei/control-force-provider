@@ -72,7 +72,7 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
   spinner_.start();
 }
 
-void ControlForceProvider::getForce(Vector4d& force, const Vector4d& ee_position) { control_force_calculator_->getForce(force, ee_position); }
+void ControlForceProvider::getForce(Vector3d& force, const Vector3d& ee_position) { control_force_calculator_->getForce(force, ee_position); }
 
 void ControlForceProvider::rcmCallback(const geometry_msgs::PointStamped& rcm) {
   Vector3d rcm_eigen;
@@ -83,8 +83,7 @@ void ControlForceProvider::rcmCallback(const geometry_msgs::PointStamped& rcm) {
 void ControlForceProvider::goalCallback(const geometry_msgs::Point& goal) {
   Vector3d goal_eigen;
   tf::pointMsgToEigen(goal, goal_eigen);
-  Vector4d goal_eigen4d = {goal_eigen[0], goal_eigen[1], goal_eigen[2], 0};
-  control_force_calculator_->setGoal(goal_eigen4d);
+  control_force_calculator_->setGoal(goal_eigen);
 }
 
 ControlForceProvider::~ControlForceProvider() {
@@ -92,8 +91,8 @@ ControlForceProvider::~ControlForceProvider() {
   node_handle_.shutdown();
 }
 
-SimulatedRobot::SimulatedRobot(Vector3d rcm, Vector4d position, ControlForceProvider& cfp)
-    : rcm_(std::move(rcm)), position_(std::move(position)), cfp_(cfp), velocity_(Vector4d::Zero()) {
+SimulatedRobot::SimulatedRobot(Vector3d rcm, Vector3d position, ControlForceProvider& cfp)
+    : rcm_(std::move(rcm)), position_(std::move(position)), cfp_(cfp), velocity_(Vector3d::Zero()) {
   cfp_.setRCM(rcm_);
 }
 

@@ -35,15 +35,15 @@ class ControlForceProvider : ROSNode {
   boost::shared_ptr<Visualizer> visualizer_;
   void loadConfig();
 
-  void goalCallback(const geometry_msgs::Point& goal);  // TODO: handle Vector4d goal (include roll)
+  void goalCallback(const geometry_msgs::Point& goal);  // TODO: handle Vector3d goal (include roll)
   void rcmCallback(const geometry_msgs::PointStamped& rcm);
 
  public:
   ControlForceProvider();
-  void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position);
+  void getForce(Eigen::Vector3d& force, const Eigen::Vector3d& ee_position);
   ~ControlForceProvider();
 
-  [[nodiscard]] const Eigen::Vector3d& getRCM() const { return control_force_calculator_->getRCM(); }
+  [[nodiscard]] Eigen::Vector3d getRCM() const { return control_force_calculator_->getRCM(); }
   void setRCM(const Eigen::Vector3d& rcm) { control_force_calculator_->setRCM(rcm); }
 };
 
@@ -52,12 +52,12 @@ class SimulatedRobot {
   const static inline double max_force = 1e-4;
   ControlForceProvider& cfp_;
   Eigen::Vector3d rcm_;
-  Eigen::Vector4d position_;
-  Eigen::Vector4d velocity_;
-  Eigen::Vector4d force_;
+  Eigen::Vector3d position_;
+  Eigen::Vector3d velocity_;
+  Eigen::Vector3d force_;
 
  public:
-  SimulatedRobot(Eigen::Vector3d rcm, Eigen::Vector4d position, ControlForceProvider& cfp);
+  SimulatedRobot(Eigen::Vector3d rcm, Eigen::Vector3d position, ControlForceProvider& cfp);
   void update();
 };
 }  // namespace control_force_provider

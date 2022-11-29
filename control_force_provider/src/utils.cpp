@@ -23,6 +23,29 @@ using namespace Eigen;
 
 torch::TensorOptions getTensorOptions() { return torch::TensorOptions().dtype(torch::kFloat64).device(torch::kCPU).requires_grad(false); }
 
+VectorXd tensorToVector(const torch::Tensor &tensor) {
+  if (tensor.dim() > 1) {
+    auto acc = tensor.accessor<double, 2>();
+    VectorXd out(tensor.size(1));
+    for (size_t i = 0; i < tensor.size(1); i++) out[i] = acc[0][i];
+    return out;
+  } else {
+    auto acc = tensor.accessor<double, 1>();
+    VectorXd out(tensor.size(0));
+    for (size_t i = 0; i < tensor.size(0); i++) out[i] = acc[i];
+    return out;
+  }
+}
+
+torch::Tensor vectorToTensor(const VectorXd &vector) {
+  torch::Tensor out = torch::empty(vector.size(), getTensorOptions());
+  auto acc = out.accessor<double, 1>();
+  for (size_t i = 0; i < vector.size(); i++) {
+    acc[i] = vector[i];
+  }
+  return out;
+}
+
 std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str) {
   boost::sregex_token_iterator iter(str.begin(), str.end(), boost::regex(regex), 0);
   boost::sregex_token_iterator end;
@@ -80,8 +103,9 @@ void shortestLine(const Vector3d &a1, const Vector3d &b1, const Vector3d &a2, co
   s = (t * e3 - b1.dot(a_diff)) / e1;
 }
 
-Quaterniond zRotation(const Vector3d &p1, const Vector3d &p2) {
-  Vector3d vec = (p2 - p1).normalized();
+Quaterniond zRotation(const torch::Tensor &p1, const torch::Tensor &p2) {
+  // TODO: witcalc with tensor
+  Vector3d vec = (tensorToVector(p2) - tensorToVector(p1)).normalized();
   Vector3d z = Vector3d::UnitZ();
   AngleAxis rot(std::acos(z.dot(vec)), z.cross(vec).normalized());
   return Quaterniond(rot.toRotationMatrix());

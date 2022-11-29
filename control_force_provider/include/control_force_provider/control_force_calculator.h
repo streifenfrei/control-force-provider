@@ -14,6 +14,9 @@
 #include "control_force_provider_msgs/UpdateNetwork.h"
 #include "obstacle.h"
 #include "time.h"
+#include "utils.h"
+
+using namespace control_force_provider;
 
 namespace control_force_provider::backend {
 class ControlForceCalculator {
@@ -26,27 +29,27 @@ class ControlForceCalculator {
  protected:
   torch::Tensor workspace_bb_origin_;
   const torch::Tensor workspace_bb_dims_;
-  const double max_force_;
-  Eigen::Vector4d ee_position;
-  Eigen::Vector4d ee_rotation;
-  Eigen::Vector4d ee_velocity;
-  Eigen::Vector3d rcm;
-  Eigen::Vector4d goal;
+  const torch::Scalar max_force_;
+  torch::Tensor ee_position;
+  torch::Tensor ee_rotation;
+  torch::Tensor ee_velocity;
+  torch::Tensor rcm;
+  torch::Tensor goal;
   double start_time;
-  double elapsed_time = 0;
+  torch::Scalar elapsed_time;
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
   boost::shared_ptr<ObstacleLoader> obstacle_loader_;
-  std::vector<Eigen::Vector4d> ob_positions;
-  std::vector<Eigen::Vector4d> ob_rotations;
-  std::vector<Eigen::Vector4d> ob_velocities;
-  std::vector<Eigen::Vector3d> ob_rcms;
-  std::vector<Eigen::Vector3d> points_on_l1_;
-  std::vector<Eigen::Vector3d> points_on_l2_;
-  Eigen::Vector3d offset_;
+  std::vector<torch::Tensor> ob_positions;
+  std::vector<torch::Tensor> ob_rotations;
+  std::vector<torch::Tensor> ob_velocities;
+  std::vector<torch::Tensor> ob_rcms;
+  std::vector<torch::Tensor> points_on_l1_;
+  std::vector<torch::Tensor> points_on_l2_;
+  torch::Tensor offset_;
   friend class Visualizer;
   friend class StateProvider;
 
-  virtual void getForceImpl(Eigen::Vector4d& force) = 0;
+  virtual void getForceImpl(Eigen::Vector3d& force) = 0;
 
   void updateDistanceVectors();
 
@@ -54,20 +57,29 @@ class ControlForceCalculator {
 
  public:
   ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path);
-  void getForce(Eigen::Vector4d& force, const Eigen::Vector4d& ee_position_);
+  void getForce(Eigen::Vector3d& force, const Eigen::Vector3d& ee_position_);
   virtual ~ControlForceCalculator() = default;
-  [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm; }
+  [[nodiscard]] Eigen::Vector3d getRCM() const {
+    auto acc = rcm.accessor<double, 1>();
+    return Eigen::Vector3d(acc[0], acc[1], acc[2]);
+  }
   void setRCM(const Eigen::Vector3d& rcm_) {
+    if (rcm_available_) return;  // disable function once rcm is set: workaround to avoid race condition
     if (rcm_.norm() < rcm_max_norm) {
+      torch::Tensor rcm_t = utils::vectorToTensor(rcm_);
       rcm_available_ = true;
-      rcm = rcm_ - offset_;
+      rcm = rcm_t - offset_;
     }
   };
-  [[nodiscard]] const Eigen::Vector4d& getGoal() const { return goal; }
-  void setGoal(const Eigen::Vector4d& goal_) {
+  [[nodiscard]] Eigen::Vector3d getGoal() const {
+    auto acc = goal.accessor<double, 1>();
+    return Eigen::Vector3d(acc[0], acc[1], acc[2]);
+  }
+
+  void setGoal(const Eigen::Vector3d& goal_) {
     goal_available_ = true;
-    goal = goal_;
-    goal.head(3) -= offset_;
+    goal = utils::vectorToTensor(goal_);
+    goal -= offset_;
     start_time = Time::now();
   };
 };
@@ -83,7 +95,7 @@ class PotentialFieldMethod : public ControlForceCalculator {
   friend class Visualizer;
 
  protected:
-  void getForceImpl(Eigen::Vector4d& force) override;
+  void getForceImpl(Eigen::Vector3d& force) override;
 
  public:
   PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path = "");
@@ -97,17 +109,17 @@ class StateProvider {
   static inline const std::string arg_regex = "[[:alpha:]][[:digit:]]+";
   class StatePopulator {
    private:
-    std::vector<std::deque<Eigen::VectorXd>> histories_;
+    std::vector<std::deque<torch::Tensor>> histories_;
     unsigned int stride_index_ = 0;
 
    public:
-    std::vector<const double*> vectors_;
+    std::vector<const torch::Tensor*> tensors_;
     int length_ = 0;
     unsigned int history_length_ = 1;
     unsigned int history_stride_ = 0;
     StatePopulator() = default;
     void populate(torch::Tensor& state, int& index);
-    [[nodiscard]] unsigned int getDim() const { return length_ * vectors_.size() * history_length_; };
+    [[nodiscard]] unsigned int getDim() const { return length_ * tensors_.size() * history_length_; };
   };
   std::vector<StatePopulator> state_populators_;
   static StatePopulator createPopulatorFromString(const ControlForceCalculator& cfc, const std::string& str);
@@ -121,8 +133,8 @@ class StateProvider {
 
 class EpisodeContext {
  private:
-  Eigen::Vector4d start_;
-  Eigen::Vector4d goal_;
+  Eigen::Vector3d start_;
+  Eigen::Vector3d goal_;
   std::vector<boost::shared_ptr<Obstacle>>& obstacles_;
   boost::shared_ptr<ObstacleLoader>& obstacle_loader_;
   boost::random::mt19937 rng_;
@@ -137,8 +149,8 @@ class EpisodeContext {
   EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles_, boost::shared_ptr<ObstacleLoader>& obstacle_loader, const YAML::Node& config);
   void generateEpisode();
   void startEpisode();
-  const Eigen::Vector4d& getStart() const { return start_; };
-  const Eigen::Vector4d& getGoal() const { return goal_; };
+  const Eigen::Vector3d& getStart() const { return start_; };
+  const Eigen::Vector3d& getGoal() const { return goal_; };
 };
 
 class ReinforcementLearningAgent : public ControlForceCalculator {
@@ -151,14 +163,14 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   const bool rcm_origin_;
   EpisodeContext episode_context_;
   bool initializing_episode = true;
-  Eigen::Vector4d current_force_;
+  Eigen::Vector3d current_force_;
   double last_calculation_;
-  boost::future<Eigen::Vector4d> calculation_future_;
-  boost::promise<Eigen::Vector4d> calculation_promise_;
+  boost::future<Eigen::Vector3d> calculation_future_;
+  boost::promise<Eigen::Vector3d> calculation_promise_;
   unsigned int goal_delay_count = 0;
   friend class Visualizer;
 
-  Eigen::Vector4d getAction();
+  Eigen::Vector3d getAction();
   void calculationRunnable();
 
  protected:
@@ -167,7 +179,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   boost::shared_ptr<ros::ServiceClient> training_service_client;
 
   virtual torch::Tensor getActionInference(torch::Tensor& state) = 0;
-  void getForceImpl(Eigen::Vector4d& force) override;
+  void getForceImpl(Eigen::Vector3d& force) override;
 
  public:
   ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle,

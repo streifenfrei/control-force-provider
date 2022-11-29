@@ -17,7 +17,7 @@ void Obstacle::reset(double offset) {
   start_time = Time::now() - offset;
 }
 
-Vector4d Obstacle::getPosition() { return getPositionAt((Time::now() - start_time)); }
+Vector3d Obstacle::getPosition() { return getPositionAt((Time::now() - start_time)); }
 
 WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string& id) : Obstacle(id), speed_(getConfigValue<double>(config, "speed")[0]) {
   std::vector<double> waypoints_raw = getConfigValue<double>(config, "waypoints");
@@ -41,7 +41,7 @@ WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string
   setRCM({rcm_raw[0], rcm_raw[1], rcm_raw[2]});
 }
 
-Vector4d WaypointsObstacle::getPositionAt(double time) {
+Vector3d WaypointsObstacle::getPositionAt(double time) {
   time = fmod(time, total_duration_);
   unsigned int segment;
   double duration_sum = 0;
@@ -55,8 +55,7 @@ Vector4d WaypointsObstacle::getPositionAt(double time) {
   double position_on_segment = 1 - (duration_sum - time) / segments_durations_[segment];
   double length_on_segment = segments_lengths_[segment] * position_on_segment;
   Vector3d segment_part = segments_normalized_[segment] * length_on_segment;
-  Vector3d position3d = waypoints_[segment] + segment_part;
-  return {position3d[0], position3d[1], position3d[2], 0};
+  return waypoints_[segment] + segment_part;
 }
 
 FramesObstacle::FramesObstacle(const std::string& id) : Obstacle(id) { iter_ = frames_.begin(); }
@@ -66,15 +65,14 @@ void FramesObstacle::setFrames(std::map<double, Affine3d> frames) {
   iter_ = frames_.begin();
 }
 
-Vector4d FramesObstacle::getPositionAt(double time) {
+Vector3d FramesObstacle::getPositionAt(double time) {
   auto start_iter = iter_;
   do {
     auto current_iter = iter_++;
     if (iter_ == frames_.end()) {
       if (current_iter->first < time) {  // reached end
         iter_--;
-        const Vector3d& out = current_iter->second.translation();
-        return Vector4d(out[0], out[1], out[2], 0);
+        return current_iter->second.translation();
       }
       iter_ = frames_.begin();
       continue;
@@ -87,8 +85,7 @@ Vector4d FramesObstacle::getPositionAt(double time) {
       const Vector3d& p2 = next_iter->second.translation();
       iter_--;
       // linear interpolation
-      const Vector3d& out = p1 + (((time - t1) / (t2 - t1)) * (p2 - p1));
-      return Vector4d(out[0], out[1], out[2], 0);
+      return p1 + (((time - t1) / (t2 - t1)) * (p2 - p1));
     }
   } while (iter_ != start_iter);
 }

@@ -15,55 +15,55 @@ Visualizer::Visualizer(ros::NodeHandle& node_handle, boost::shared_ptr<ControlFo
       timer_(node_handle_.createTimer(ros::Duration(0.05), &Visualizer::callback, this)) {}
 
 void Visualizer::callback(const ros::TimerEvent& event) {
+  // TODO: visualizer is not thread safe and currently crashes everything...
   visual_tools_.deleteAllMarkers();
   // obstacles
-  const Vector3d& offset = control_force_calculator_->offset_;
+  const torch::Tensor& offset = control_force_calculator_->offset_;
   for (size_t i = 0; i < control_force_calculator_->obstacles.size(); i++) {
-    Vector3d obstacle_rcm = control_force_calculator_->ob_rcms[i] + offset;
-    Vector4d obstacle_pos = control_force_calculator_->ob_positions[i];
-    obstacle_pos.head(3) += offset;
+    Vector3d obstacle_rcm = utils::tensorToVector(control_force_calculator_->ob_rcms[i] + offset);
+    torch::Tensor obstacle_pos = control_force_calculator_->ob_positions[i];
+    obstacle_pos += offset;
     visual_tools_.publishSphere(obstacle_rcm, rviz_visual_tools::BROWN);
-    visual_tools_.publishLine(obstacle_rcm, obstacle_pos.head(3), rviz_visual_tools::BROWN);
+    visual_tools_.publishLine(obstacle_rcm, utils::tensorToVector(obstacle_pos), rviz_visual_tools::BROWN);
   }
   // control_force_calculator
-  Vector3d ee_position = control_force_calculator_->ee_position.head(3) + offset;
-  Vector3d robot_rcm = control_force_calculator_->rcm + offset;
+  Vector3d ee_position = utils::tensorToVector(control_force_calculator_->ee_position + offset);
+  Vector3d robot_rcm = utils::tensorToVector(control_force_calculator_->rcm + offset);
   visual_tools_.publishLine(robot_rcm, ee_position, rviz_visual_tools::PURPLE);
-  visual_tools_.publishSphere(control_force_calculator_->goal.head(3) + offset, rviz_visual_tools::BLUE);
+  visual_tools_.publishSphere(utils::tensorToVector(control_force_calculator_->goal + offset), rviz_visual_tools::BLUE);
   geometry_msgs::Point ee_position_msg;
   tf::pointEigenToMsg(ee_position, ee_position_msg);
   geometry_msgs::Point target_msg;
-  double scale = std::max(control_force_calculator_->ee_velocity.head(3).norm() / control_force_calculator_->max_force_ * 0.15, 0.05);
-  tf::pointEigenToMsg(ee_position.head(3) + control_force_calculator_->ee_velocity.head(3).normalized() * scale, target_msg);
+  double scale =
+      std::max(utils::tensorToVector(control_force_calculator_->ee_velocity).norm() / control_force_calculator_->max_force_.to<double>() * 0.15, 0.05);
+  tf::pointEigenToMsg(ee_position + utils::tensorToVector(control_force_calculator_->ee_velocity).normalized() * scale, target_msg);
   visual_tools_.publishArrow(ee_position_msg, target_msg, rviz_visual_tools::TRANSLUCENT_LIGHT, rviz_visual_tools::SMALL);
 
   auto acc1 = control_force_calculator_->workspace_bb_origin_.accessor<double, 1>();
   Vector3d workspace_bb_origin(acc1[0], acc1[1], acc1[2]);
   auto acc2 = control_force_calculator_->workspace_bb_dims_.accessor<double, 1>();
-  Vector3d workspace_bb_dims(acc2[0], acc2[1], acc2[2]);
-  visual_tools_.publishWireframeCuboid(Isometry3d(Translation3d(workspace_bb_origin + offset + 0.5 * workspace_bb_dims)), workspace_bb_dims[0],
-                                       workspace_bb_dims[1], workspace_bb_dims[2], rviz_visual_tools::DARK_GREY);
+  Vector3d workspace_bb_dims = utils::tensorToVector(control_force_calculator_->workspace_bb_dims_);
+  visual_tools_.publishWireframeCuboid(
+      Isometry3d(Translation3d(utils::tensorToVector(control_force_calculator_->workspace_bb_origin_ + offset) + 0.5 * workspace_bb_dims)),
+      workspace_bb_dims[0], workspace_bb_dims[1], workspace_bb_dims[2], rviz_visual_tools::DARK_GREY);
 
   boost::shared_ptr<PotentialFieldMethod> pfm = boost::dynamic_pointer_cast<PotentialFieldMethod>(control_force_calculator_);
   if (pfm) {
     for (size_t i = 0; i < control_force_calculator_->obstacles.size(); i++) {
-      double distance = (pfm->points_on_l2_[i] - pfm->points_on_l1_[i]).norm();
-      if (distance < pfm->repulsion_distance_) visual_tools_.publishLine(pfm->points_on_l1_[i], pfm->points_on_l2_[i], rviz_visual_tools::CYAN);
+      double distance = utils::tensorToVector(pfm->points_on_l2_[i] - pfm->points_on_l1_[i]).norm();
+      if (distance < pfm->repulsion_distance_)
+        visual_tools_.publishLine(utils::tensorToVector(pfm->points_on_l1_[i]), utils::tensorToVector(pfm->points_on_l2_[i]), rviz_visual_tools::CYAN);
     }
   }
   boost::shared_ptr<ReinforcementLearningAgent> rl = boost::dynamic_pointer_cast<ReinforcementLearningAgent>(control_force_calculator_);
   if (rl) {
     const EpisodeContext& ec = rl->episode_context_;
-    acc1 = ec.start_bb_origin.accessor<double, 1>();
-    Vector3d start_bb_origin(acc1[0], acc1[1], acc1[2]);
-    acc2 = ec.start_bb_dims.accessor<double, 1>();
-    Vector3d start_bb_dims(acc2[0], acc2[1], acc2[2]);
+    Vector3d start_bb_origin = utils::tensorToVector(ec.start_bb_origin);
+    Vector3d start_bb_dims = utils::tensorToVector(ec.start_bb_dims);
     visual_tools_.publishWireframeCuboid(Isometry3d(Translation3d(start_bb_origin + 0.5 * start_bb_dims)), start_bb_dims[0], start_bb_dims[1], start_bb_dims[2],
                                          rviz_visual_tools::TRANSLUCENT);
-    acc1 = ec.goal_bb_origin.accessor<double, 1>();
-    Vector3d goal_bb_origin(acc1[0], acc1[1], acc1[2]);
-    acc2 = ec.goal_bb_dims.accessor<double, 1>();
-    Vector3d goal_bb_dims(acc2[0], acc2[1], acc2[2]);
+    Vector3d goal_bb_origin = utils::tensorToVector(ec.goal_bb_origin);
+    Vector3d goal_bb_dims = utils::tensorToVector(ec.goal_bb_dims);
     visual_tools_.publishWireframeCuboid(Isometry3d(Translation3d(goal_bb_origin + 0.5 * goal_bb_dims)), goal_bb_dims[0], goal_bb_dims[1], goal_bb_dims[2],
                                          rviz_visual_tools::TRANSLUCENT);
   }

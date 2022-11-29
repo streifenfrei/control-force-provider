@@ -30,6 +30,10 @@ using namespace exceptions;
 
 torch::TensorOptions getTensorOptions();
 
+Eigen::VectorXd tensorToVector(const torch::Tensor &tensor);
+
+torch::Tensor vectorToTensor(const Eigen::VectorXd &vector);
+
 template <typename T>
 std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) {
   YAML::Node node = config[key];
@@ -61,6 +65,6 @@ std::string readFile(const std::string &file);
 
 void shortestLine(const Eigen::Vector3d &a1, const Eigen::Vector3d &b1, const Eigen::Vector3d &a2, const Eigen::Vector3d &b2, double &t, double &s);
 
-Eigen::Quaterniond zRotation(const Eigen::Vector3d &p1, const Eigen::Vector3d &p2);
+Eigen::Quaterniond zRotation(const torch::Tensor &p1, const torch::Tensor &p2);
 }  // namespace utils
 }  // namespace control_force_provider

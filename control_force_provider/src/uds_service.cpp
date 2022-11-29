@@ -54,7 +54,9 @@ int main(int argc, char* argv[]) {
       Eigen::Vector4d force = Eigen::Vector4d::Zero();
       read(uds_socket_, input_buffer);
       Eigen::Vector4d ee_position((double*)input_buffer.data());
-      cfp.getForce(force, ee_position);
+      Eigen::Vector3d force3d;
+      cfp.getForce(force3d, ee_position.head(3));
+      force.head(3) = force3d;
       write(uds_socket_, asio::const_buffer((const void*)force.data(), vector_size));
     }
   }
