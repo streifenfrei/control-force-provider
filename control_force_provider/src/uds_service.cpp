@@ -51,13 +51,14 @@ int main(int argc, char* argv[]) {
 #endif
   while (!stop) {
     if (uds_socket_.available() >= vector_size) {
-      Eigen::Vector4d force = Eigen::Vector4d::Zero();
       read(uds_socket_, input_buffer);
-      Eigen::Vector4d ee_position((double*)input_buffer.data());
-      Eigen::Vector3d force3d;
-      cfp.getForce(force3d, ee_position.head(3));
-      force.head(3) = force3d;
-      write(uds_socket_, asio::const_buffer((const void*)force.data(), vector_size));
+      torch::Tensor ee_position = torch::from_blob(input_buffer.data(), 3, utils::getTensorOptions());
+      torch::Tensor force = torch::empty(3, utils::getTensorOptions());
+      cfp.getForce(force, ee_position);
+      // TODO: make this nicer
+      Eigen::Vector3d force_eigen = utils::tensorToVector(force);
+      Eigen::Vector4d force_eigen2(force_eigen[0], force_eigen[1], force_eigen[2], 0);
+      write(uds_socket_, asio::const_buffer((const void*)force_eigen2.data(), vector_size));
     }
   }
   remove(socket_file);

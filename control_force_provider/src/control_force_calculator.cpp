@@ -108,6 +108,7 @@ void ControlForceCalculator::updateDistanceVectors() {
 }
 
 void ControlForceCalculator::setOffset(const torch::Tensor& offset) {
+  // TODO fix it
   torch::Tensor translation = offset_ - offset;
   workspace_bb_origin_ += offset;
   rcm += translation;
@@ -258,7 +259,9 @@ EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacl
     : obstacles_(obstacles),
       obstacle_loader_(obstacle_loader),
       begin_max_offset_(utils::getConfigValue<double>(config, "begin_max_offset")[0]),
-      start_bb_origin(utils::tensorFromList(utils::getConfigValue<double>(config, "start_bb"), 0)),
+      start_(torch::zeros(3, utils::getTensorOptions())),
+      goal_(torch::zeros(3, utils::getTensorOptions())),
+      start_bb_origin(utils::tensorFromList(utils ::getConfigValue<double>(config, "start_bb"), 0)),
       start_bb_dims(utils::tensorFromList(utils::getConfigValue<double>(config, "start_bb"), 3)),
       goal_bb_origin(utils::tensorFromList(utils::getConfigValue<double>(config, "goal_bb"), 0)),
       goal_bb_dims(utils::tensorFromList(utils::getConfigValue<double>(config, "goal_bb"), 3)) {}
@@ -289,6 +292,7 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared
       train(utils::getConfigValue<bool>(config["rl"], "train")[0]),
       rcm_origin_(utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]),
       output_dir(utils::getConfigValue<std::string>(config["rl"], "output_directory")[0]),
+      current_force_(torch::zeros(3, utils::getTensorOptions())),
       last_calculation_(Time::now()) {
   if (rcm_origin_) setOffset(rcm);
   state_provider = boost::make_shared<StateProvider>(*this, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0]);

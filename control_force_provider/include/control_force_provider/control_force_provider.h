@@ -40,24 +40,24 @@ class ControlForceProvider : ROSNode {
 
  public:
   ControlForceProvider();
-  void getForce(Eigen::Vector3d& force, const Eigen::Vector3d& ee_position);
+  void getForce(torch::Tensor& force, const torch::Tensor& ee_position);
   ~ControlForceProvider();
 
-  [[nodiscard]] Eigen::Vector3d getRCM() const { return utils::tensorToVector(control_force_calculator_->getRCM()); }
-  void setRCM(const Eigen::Vector3d& rcm) { control_force_calculator_->setRCM(utils::vectorToTensor(rcm)); }
+  [[nodiscard]] torch::Tensor getRCM() const { return control_force_calculator_->getRCM(); }
+  void setRCM(const torch::Tensor& rcm) { control_force_calculator_->setRCM(rcm); }
 };
 
 class SimulatedRobot {
  private:
   const static inline double max_force = 1e-4;
   ControlForceProvider& cfp_;
-  Eigen::Vector3d rcm_;
-  Eigen::Vector3d position_;
-  Eigen::Vector3d velocity_;
-  Eigen::Vector3d force_;
+  torch::Tensor rcm_;
+  torch::Tensor position_;
+  torch::Tensor velocity_;
+  torch::Tensor force_;
 
  public:
-  SimulatedRobot(Eigen::Vector3d rcm, Eigen::Vector3d position, ControlForceProvider& cfp);
+  SimulatedRobot(torch::Tensor rcm, torch::Tensor position, ControlForceProvider& cfp);
   void update();
 };
 }  // namespace control_force_provider

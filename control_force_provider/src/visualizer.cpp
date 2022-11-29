@@ -29,6 +29,8 @@ void Visualizer::callback(const ros::TimerEvent& event) {
   // control_force_calculator
   Vector3d ee_position = utils::tensorToVector(control_force_calculator_->ee_position + offset);
   Vector3d robot_rcm = utils::tensorToVector(control_force_calculator_->rcm + offset);
+  ROS_WARN_STREAM(robot_rcm);
+  ROS_WARN_STREAM(offset);
   visual_tools_.publishLine(robot_rcm, ee_position, rviz_visual_tools::PURPLE);
   visual_tools_.publishSphere(utils::tensorToVector(control_force_calculator_->goal + offset), rviz_visual_tools::BLUE);
   geometry_msgs::Point ee_position_msg;

@@ -70,11 +70,7 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
   spinner_.start();
 }
 
-void ControlForceProvider::getForce(Vector3d& force, const Vector3d& ee_position) {
-  torch::Tensor force_t = utils::vectorToTensor(force);
-  control_force_calculator_->getForce(force_t, utils::vectorToTensor(ee_position));
-  force = utils::tensorToVector(force_t);
-}
+void ControlForceProvider::getForce(torch::Tensor& force, const torch::Tensor& ee_position) { control_force_calculator_->getForce(force, ee_position); }
 
 void ControlForceProvider::rcmCallback(const geometry_msgs::PointStamped& rcm) {
   Vector3d rcm_eigen;
@@ -93,14 +89,14 @@ ControlForceProvider::~ControlForceProvider() {
   node_handle_.shutdown();
 }
 
-SimulatedRobot::SimulatedRobot(Vector3d rcm, Vector3d position, ControlForceProvider& cfp)
-    : rcm_(std::move(rcm)), position_(std::move(position)), cfp_(cfp), velocity_(Vector3d::Zero()) {
+SimulatedRobot::SimulatedRobot(torch::Tensor rcm, torch::Tensor position, ControlForceProvider& cfp)
+    : rcm_(std::move(rcm)), position_(std::move(position)), cfp_(cfp), velocity_(torch::zeros(3, utils::getTensorOptions())) {
   cfp_.setRCM(rcm_);
 }
 
 void SimulatedRobot::update() {
   cfp_.getForce(force_, position_);
-  double magnitude = force_.norm();
+  double magnitude = utils::norm(force_).item().toDouble();
   if (magnitude > max_force) {
     force_ = force_ / magnitude * max_force;
   }

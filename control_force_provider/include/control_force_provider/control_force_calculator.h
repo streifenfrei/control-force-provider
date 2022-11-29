@@ -61,7 +61,6 @@ class ControlForceCalculator {
   virtual ~ControlForceCalculator() = default;
   [[nodiscard]] torch::Tensor getRCM() const { return rcm; }
   void setRCM(const torch::Tensor& rcm_) {
-    if (rcm_available_) return;  // disable function once rcm is set: workaround to avoid race condition
     if (utils::norm(rcm_).item().toDouble() < rcm_max_norm) {
       torch::Tensor rcm_t = rcm_;
       rcm_available_ = true;
