@@ -70,18 +70,22 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
   spinner_.start();
 }
 
-void ControlForceProvider::getForce(Vector3d& force, const Vector3d& ee_position) { control_force_calculator_->getForce(force, ee_position); }
+void ControlForceProvider::getForce(Vector3d& force, const Vector3d& ee_position) {
+  torch::Tensor force_t = utils::vectorToTensor(force);
+  control_force_calculator_->getForce(force_t, utils::vectorToTensor(ee_position));
+  force = utils::tensorToVector(force_t);
+}
 
 void ControlForceProvider::rcmCallback(const geometry_msgs::PointStamped& rcm) {
   Vector3d rcm_eigen;
   tf::pointMsgToEigen(rcm.point, rcm_eigen);
-  control_force_calculator_->setRCM(rcm_eigen);
+  control_force_calculator_->setRCM(utils::vectorToTensor(rcm_eigen));
 }
 
 void ControlForceProvider::goalCallback(const geometry_msgs::Point& goal) {
   Vector3d goal_eigen;
   tf::pointMsgToEigen(goal, goal_eigen);
-  control_force_calculator_->setGoal(goal_eigen);
+  control_force_calculator_->setGoal(utils::vectorToTensor(goal_eigen));
 }
 
 ControlForceProvider::~ControlForceProvider() {

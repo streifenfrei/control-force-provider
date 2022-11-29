@@ -43,8 +43,8 @@ class ControlForceProvider : ROSNode {
   void getForce(Eigen::Vector3d& force, const Eigen::Vector3d& ee_position);
   ~ControlForceProvider();
 
-  [[nodiscard]] Eigen::Vector3d getRCM() const { return control_force_calculator_->getRCM(); }
-  void setRCM(const Eigen::Vector3d& rcm) { control_force_calculator_->setRCM(rcm); }
+  [[nodiscard]] Eigen::Vector3d getRCM() const { return utils::tensorToVector(control_force_calculator_->getRCM()); }
+  void setRCM(const Eigen::Vector3d& rcm) { control_force_calculator_->setRCM(utils::vectorToTensor(rcm)); }
 };
 
 class SimulatedRobot {

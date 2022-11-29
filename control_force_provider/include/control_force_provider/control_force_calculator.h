@@ -49,37 +49,30 @@ class ControlForceCalculator {
   friend class Visualizer;
   friend class StateProvider;
 
-  virtual void getForceImpl(Eigen::Vector3d& force) = 0;
+  virtual void getForceImpl(torch::Tensor& force) = 0;
 
   void updateDistanceVectors();
 
-  void setOffset(Eigen::Vector3d offset);
+  void setOffset(const torch::Tensor& offset);
 
  public:
   ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path);
-  void getForce(Eigen::Vector3d& force, const Eigen::Vector3d& ee_position_);
+  void getForce(torch::Tensor& force, const torch::Tensor& ee_position_);
   virtual ~ControlForceCalculator() = default;
-  [[nodiscard]] Eigen::Vector3d getRCM() const {
-    auto acc = rcm.accessor<double, 1>();
-    return Eigen::Vector3d(acc[0], acc[1], acc[2]);
-  }
-  void setRCM(const Eigen::Vector3d& rcm_) {
+  [[nodiscard]] torch::Tensor getRCM() const { return rcm; }
+  void setRCM(const torch::Tensor& rcm_) {
     if (rcm_available_) return;  // disable function once rcm is set: workaround to avoid race condition
-    if (rcm_.norm() < rcm_max_norm) {
-      torch::Tensor rcm_t = utils::vectorToTensor(rcm_);
+    if (utils::norm(rcm_).item().toDouble() < rcm_max_norm) {
+      torch::Tensor rcm_t = rcm_;
       rcm_available_ = true;
       rcm = rcm_t - offset_;
     }
   };
-  [[nodiscard]] Eigen::Vector3d getGoal() const {
-    auto acc = goal.accessor<double, 1>();
-    return Eigen::Vector3d(acc[0], acc[1], acc[2]);
-  }
+  [[nodiscard]] torch::Tensor getGoal() const { return goal; }
 
-  void setGoal(const Eigen::Vector3d& goal_) {
+  void setGoal(const torch::Tensor& goal_) {
     goal_available_ = true;
-    goal = utils::vectorToTensor(goal_);
-    goal -= offset_;
+    goal = goal_ - offset_;
     start_time = Time::now();
   };
 };
@@ -95,7 +88,7 @@ class PotentialFieldMethod : public ControlForceCalculator {
   friend class Visualizer;
 
  protected:
-  void getForceImpl(Eigen::Vector3d& force) override;
+  void getForceImpl(torch::Tensor& force) override;
 
  public:
   PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path = "");
@@ -133,8 +126,8 @@ class StateProvider {
 
 class EpisodeContext {
  private:
-  Eigen::Vector3d start_;
-  Eigen::Vector3d goal_;
+  torch::Tensor start_;
+  torch::Tensor goal_;
   std::vector<boost::shared_ptr<Obstacle>>& obstacles_;
   boost::shared_ptr<ObstacleLoader>& obstacle_loader_;
   boost::random::mt19937 rng_;
@@ -149,8 +142,8 @@ class EpisodeContext {
   EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles_, boost::shared_ptr<ObstacleLoader>& obstacle_loader, const YAML::Node& config);
   void generateEpisode();
   void startEpisode();
-  const Eigen::Vector3d& getStart() const { return start_; };
-  const Eigen::Vector3d& getGoal() const { return goal_; };
+  const torch::Tensor& getStart() const { return start_; };
+  const torch::Tensor& getGoal() const { return goal_; };
 };
 
 class ReinforcementLearningAgent : public ControlForceCalculator {
@@ -163,14 +156,14 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   const bool rcm_origin_;
   EpisodeContext episode_context_;
   bool initializing_episode = true;
-  Eigen::Vector3d current_force_;
+  torch::Tensor current_force_;
   double last_calculation_;
-  boost::future<Eigen::Vector3d> calculation_future_;
-  boost::promise<Eigen::Vector3d> calculation_promise_;
+  boost::future<torch::Tensor> calculation_future_;
+  boost::promise<torch::Tensor> calculation_promise_;
   unsigned int goal_delay_count = 0;
   friend class Visualizer;
 
-  Eigen::Vector3d getAction();
+  torch::Tensor getAction();
   void calculationRunnable();
 
  protected:
@@ -179,7 +172,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   boost::shared_ptr<ros::ServiceClient> training_service_client;
 
   virtual torch::Tensor getActionInference(torch::Tensor& state) = 0;
-  void getForceImpl(Eigen::Vector3d& force) override;
+  void getForceImpl(torch::Tensor& force) override;
 
  public:
   ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle,

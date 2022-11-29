@@ -46,10 +46,10 @@ ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obs
   obstacle_loader_ = boost::make_shared<ObstacleLoader>(frames_obstacles, data_path, reference_obstacle);
 }
 
-void ControlForceCalculator::getForce(Vector3d& force, const Vector3d& ee_position_) {
-  torch::Tensor ee_position_off = utils::vectorToTensor(ee_position_);
+void ControlForceCalculator::getForce(torch::Tensor& force, const torch::Tensor& ee_position_) {
+  torch::Tensor ee_position_off = ee_position_;
   ee_position_off -= offset_;
-  if (!goal_available_) setGoal(utils::tensorToVector(ee_position));
+  if (!goal_available_) setGoal(ee_position);
   if (rcm_available_) {
     ee_velocity = ee_position_off - ee_position;
     ee_position = ee_position_off;
@@ -69,7 +69,7 @@ void ControlForceCalculator::getForce(Vector3d& force, const Vector3d& ee_positi
     getForceImpl(force);
   }
   // clip force to workspace bb
-  torch::Tensor next_pos = ee_position + utils::vectorToTensor(force);
+  torch::Tensor next_pos = ee_position + force;
   double distance_to_wall = INFINITY;
   double next_distance_to_wall = INFINITY;
   auto workspace_bb_origin_acc = workspace_bb_origin_.accessor<double, 1>();
@@ -83,10 +83,10 @@ void ControlForceCalculator::getForce(Vector3d& force, const Vector3d& ee_positi
         boost::algorithm::clamp(utils::tensorToVector(next_pos)[i], workspace_bb_origin_acc[i], workspace_bb_origin_acc[i] + workspace_bb_dims_acc[i]);
   }
   if (next_distance_to_wall < distance_to_wall) {
-    force = utils::tensorToVector(next_pos - ee_position);
+    force = next_pos - ee_position;
     if (distance_to_wall > 0) {
       double max_magnitude = distance_to_wall * workspace_bb_stopping_strength;
-      double magnitude = force.norm();
+      double magnitude = utils::norm(force).item().toDouble();
       if (magnitude > max_magnitude) force = force / magnitude * max_magnitude;
     }
   }
@@ -107,12 +107,12 @@ void ControlForceCalculator::updateDistanceVectors() {
   }
 }
 
-void ControlForceCalculator::setOffset(Vector3d offset) {
-  torch::Tensor translation = offset_ - utils::vectorToTensor(offset);
-  workspace_bb_origin_ += utils::vectorToTensor(offset);
+void ControlForceCalculator::setOffset(const torch::Tensor& offset) {
+  torch::Tensor translation = offset_ - offset;
+  workspace_bb_origin_ += offset;
   rcm += translation;
   goal += translation;
-  offset_ = utils::vectorToTensor(offset);
+  offset_ = offset;
 }
 
 PotentialFieldMethod::PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path)
@@ -129,7 +129,7 @@ PotentialFieldMethod::PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacl
   }
 }
 
-void PotentialFieldMethod::getForceImpl(Vector3d& force) {
+void PotentialFieldMethod::getForceImpl(torch::Tensor& force) {
   // attractive vector
   // TODO: replace with tensors fully
   Vector3d attractive_vector = utils::tensorToVector(goal - ee_position);
@@ -171,7 +171,7 @@ void PotentialFieldMethod::getForceImpl(Vector3d& force) {
   }
   if ((utils::tensorToVector(ee_position) + repulsive_vector - a1).norm() < min_rcm_distance_)  // prevent pushing the end effector too close to the RCM
     repulsive_vector = {0, 0, 0};
-  force = attractive_vector + repulsive_vector;
+  force = utils::vectorToTensor(attractive_vector + repulsive_vector);
 }
 
 StateProvider::StatePopulator StateProvider::createPopulatorFromString(const ControlForceCalculator& cfc, const std::string& str) {
@@ -290,10 +290,10 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared
       rcm_origin_(utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]),
       output_dir(utils::getConfigValue<std::string>(config["rl"], "output_directory")[0]),
       last_calculation_(Time::now()) {
-  if (rcm_origin_) setOffset(utils::tensorToVector(rcm));
+  if (rcm_origin_) setOffset(rcm);
   state_provider = boost::make_shared<StateProvider>(*this, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0]);
   calculation_future_ = calculation_promise_.get_future();
-  calculation_promise_.set_value(Vector3d::Zero());
+  calculation_promise_.set_value(torch::zeros(3, utils::getTensorOptions()));
   if (train) {
     training_service_client = boost::make_shared<ros::ServiceClient>(node_handle.serviceClient<control_force_provider_msgs::UpdateNetwork>("update_network"));
   }
@@ -302,7 +302,7 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(std::vector<boost::shared
   initializing_episode = true;
 }
 
-Vector3d ReinforcementLearningAgent::getAction() {
+torch::Tensor ReinforcementLearningAgent::getAction() {
   if (train) {
     if (training_service_client->exists()) {
       torch::Tensor state_tensor = state_provider->createState();
@@ -345,29 +345,29 @@ Vector3d ReinforcementLearningAgent::getAction() {
       for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_dims[i] = workspace_bb_dims_acc[i];
       srv.request.elapsed_time = elapsed_time.toDouble();
       if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to call training service.");
-      return Vector3d(srv.response.action.data());
+      return utils::createTensor(std::vector<double>(std::begin(srv.response.action), std::end(srv.response.action)));
     } else
-      return Vector3d::Zero();
+      return torch::zeros(3, utils::getTensorOptions());
   } else {
     // TODO: extrapolate current state during inference
     // torch::Tensor state = getActionInference(...);
-    return Vector3d::Zero();
+    return torch::zeros(3, utils::getTensorOptions());
   }
 }
 
 void ReinforcementLearningAgent::calculationRunnable() { calculation_promise_.set_value(getAction()); }
 
-void ReinforcementLearningAgent::getForceImpl(Vector3d& force) {
+void ReinforcementLearningAgent::getForceImpl(torch::Tensor& force) {
   if (rcm_origin_ && !rcm.equal(torch::zeros(3, utils::getTensorOptions()))) {
-    setOffset(utils::tensorToVector(rcm));
+    setOffset(rcm);
     force = current_force_;
     return;
   }
   double now = Time::now();
   if (now - last_calculation_ > interval_duration_) {
     if (train) {
-      Vector3d goal_vector = utils::tensorToVector(goal - ee_position);
-      if (goal_vector.norm() < goal_reached_threshold_distance_) {
+      torch::Tensor goal_vector = goal - ee_position;
+      if (utils::norm(goal_vector).item().toDouble() < goal_reached_threshold_distance_) {
         if (initializing_episode) {
           episode_context_.startEpisode();
           setGoal(episode_context_.getGoal());
@@ -396,12 +396,9 @@ void ReinforcementLearningAgent::getForceImpl(Vector3d& force) {
       }
     }
     last_calculation_ = now;
-    if (!current_force_.allFinite() || current_force_.hasNaN()) {
+    if (!torch::isfinite(current_force_).any().item().toBool() || torch::isnan(current_force_).any().item().toBool()) {
       ROS_WARN_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "The force vector contains Infs or NaNs.");
-      for (size_t i = 0; i < 3; i++) {
-        double value = current_force_[i];
-        if (!std::isfinite(value) || std::isnan(value)) current_force_[i] = 0;
-      }
+      current_force_ = torch::nan_to_num(current_force_, 0, 0, 0);
     }
   }
   force = current_force_;
