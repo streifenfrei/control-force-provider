@@ -17,31 +17,32 @@ void Obstacle::reset(double offset) {
   start_time = Time::now() - offset;
 }
 
-Vector3d Obstacle::getPosition() { return getPositionAt((Time::now() - start_time)); }
+torch::Tensor Obstacle::getPosition() { return getPositionAt((Time::now() - start_time)); }
 
 WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string& id) : Obstacle(id), speed_(getConfigValue<double>(config, "speed")[0]) {
   std::vector<double> waypoints_raw = getConfigValue<double>(config, "waypoints");
   unsigned int waypoints_raw_length = waypoints_raw.size() - (waypoints_raw.size() % 3);
   for (size_t i = 0; i < waypoints_raw_length; i += 3) {
-    waypoints_.emplace_back(waypoints_raw[i], waypoints_raw[i + 1], waypoints_raw[i + 2]);
+    waypoints_.push_back(utils::createTensor({waypoints_raw[i], waypoints_raw[i + 1], waypoints_raw[i + 2]}));
   }
   total_duration_ = 0;
   for (size_t i = 0; i < waypoints_.size(); i++) {
     unsigned int j = i + 1 == waypoints_.size() ? 0 : i + 1;
-    Vector3d segment = waypoints_[j] - waypoints_[i];
+    torch::Tensor segment = waypoints_[j] - waypoints_[i];
     segments_.push_back(segment);
-    segments_normalized_.push_back(segment.normalized());
-    double length = segments_[i].norm();
+    torch::Scalar norm = utils::norm(segment).item();
+    segments_normalized_.push_back(segment / norm);
+    double length = norm.toDouble();
     segments_lengths_.push_back(length);
     double duration = length / speed_;
     segments_durations_.push_back(duration);
     total_duration_ += duration;
   }
   std::vector<double> rcm_raw = getConfigValue<double>(config, "rcm");
-  setRCM({rcm_raw[0], rcm_raw[1], rcm_raw[2]});
+  setRCM(utils::createTensor({rcm_raw[0], rcm_raw[1], rcm_raw[2]}));
 }
 
-Vector3d WaypointsObstacle::getPositionAt(double time) {
+torch::Tensor WaypointsObstacle::getPositionAt(double time) {
   time = fmod(time, total_duration_);
   unsigned int segment;
   double duration_sum = 0;
@@ -54,7 +55,7 @@ Vector3d WaypointsObstacle::getPositionAt(double time) {
   }
   double position_on_segment = 1 - (duration_sum - time) / segments_durations_[segment];
   double length_on_segment = segments_lengths_[segment] * position_on_segment;
-  Vector3d segment_part = segments_normalized_[segment] * length_on_segment;
+  torch::Tensor segment_part = segments_normalized_[segment] * length_on_segment;
   return waypoints_[segment] + segment_part;
 }
 
@@ -65,14 +66,14 @@ void FramesObstacle::setFrames(std::map<double, Affine3d> frames) {
   iter_ = frames_.begin();
 }
 
-Vector3d FramesObstacle::getPositionAt(double time) {
+torch::Tensor FramesObstacle::getPositionAt(double time) {
   auto start_iter = iter_;
   do {
     auto current_iter = iter_++;
     if (iter_ == frames_.end()) {
       if (current_iter->first < time) {  // reached end
         iter_--;
-        return current_iter->second.translation();
+        return utils::vectorToTensor(current_iter->second.translation());
       }
       iter_ = frames_.begin();
       continue;
@@ -85,7 +86,7 @@ Vector3d FramesObstacle::getPositionAt(double time) {
       const Vector3d& p2 = next_iter->second.translation();
       iter_--;
       // linear interpolation
-      return p1 + (((time - t1) / (t2 - t1)) * (p2 - p1));
+      return utils::vectorToTensor(p1 + (((time - t1) / (t2 - t1)) * (p2 - p1)));
     }
   } while (iter_ != start_iter);
 }
@@ -135,7 +136,7 @@ std::vector<std::map<double, Affine3d>> ObstacleLoader::parseFile(const std::str
   return out;
 }
 
-Vector3d ObstacleLoader::estimateRCM(const std::map<double, Eigen::Affine3d>& frames) {
+torch::Tensor ObstacleLoader::estimateRCM(const std::map<double, Eigen::Affine3d>& frames) {
   boost::random::uniform_int_distribution<> index_sampler(0, frames.size() - 1);
   std::vector<int> indices;
   for (size_t i = 0; i < rcm_estimation_sample_num; i++) indices.push_back(index_sampler(rng_));
@@ -173,20 +174,20 @@ Vector3d ObstacleLoader::estimateRCM(const std::map<double, Eigen::Affine3d>& fr
   var /= points.size();
   if (std::abs(var[0]) > rcm_estimation_max_var || std::abs(var[1]) > rcm_estimation_max_var || std::abs(var[2]) > rcm_estimation_max_var)
     ROS_WARN_STREAM_NAMED("control_force_provider", "Point distribution for RCM estimation exceeds maximum variance.");
-  return rcm;
+  return utils::vectorToTensor(rcm);
 }
 
 void ObstacleLoader::updateObstacles(std::vector<std::map<double, Affine3d>> frames) {
-  Vector3d reference_rcm, rcm_translation;
+  torch::Tensor reference_rcm, rcm_translation;
   bool translate = reference_obstacle_ >= 0;
   if (translate) {
     reference_rcm = estimateRCM(frames[reference_obstacle_]);
     rcm_translation = obstacles_[reference_obstacle_]->getRCM() - reference_rcm;
   }
   for (size_t i = 0; i < frames.size(); i++) {
-    Vector3d rcm = i == reference_obstacle_ ? reference_rcm : estimateRCM(frames[i]);
+    torch::Tensor rcm = i == reference_obstacle_ ? reference_rcm : estimateRCM(frames[i]);
     if (translate) {
-      for (auto& frame : frames[i]) frame.second.pretranslate(rcm_translation);
+      for (auto& frame : frames[i]) frame.second.pretranslate((Vector3d)utils::tensorToVector(rcm_translation));
       rcm += rcm_translation;
     }
     obstacles_[i]->setFrames(std::move(frames[i]));

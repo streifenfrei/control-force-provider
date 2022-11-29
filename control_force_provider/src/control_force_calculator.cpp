@@ -26,7 +26,7 @@ ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obs
   std::vector<boost::shared_ptr<FramesObstacle>> frames_obstacles;
   int reference_obstacle = -1;
   for (auto& obstacle : obstacles) {
-    ob_rcms.push_back(utils::vectorToTensor(obstacle->getRCM()));
+    ob_rcms.push_back(obstacle->getRCM());
     ob_positions.push_back(torch::zeros(3, utils::getTensorOptions()));
     ob_rotations.push_back(torch::zeros(4, utils::getTensorOptions()));
     ob_velocities.push_back(torch::zeros(3, utils::getTensorOptions()));
@@ -34,7 +34,7 @@ ControlForceCalculator::ControlForceCalculator(std::vector<boost::shared_ptr<Obs
     points_on_l2_.push_back(torch::zeros(3, utils::getTensorOptions()));
     boost::shared_ptr<FramesObstacle> frames_obstacle = boost::dynamic_pointer_cast<FramesObstacle>(obstacle);
     if (frames_obstacle) {
-      if (frames_obstacle->getRCM() != Vector3d::Zero()) {
+      if (frames_obstacle->getRCM().equal(torch::zeros(3, utils::getTensorOptions()))) {
         if (reference_obstacle == -1)
           reference_obstacle = frames_obstacles.size();
         else
@@ -57,11 +57,11 @@ void ControlForceCalculator::getForce(Vector3d& force, const Vector3d& ee_positi
     ee_rotation = utils::vectorToTensor(Vector4d(ee_rot.x(), ee_rot.y(), ee_rot.z(), ee_rot.w()));
     elapsed_time = Time::now() - start_time;
     for (size_t i = 0; i < obstacles.size(); i++) {
-      torch::Tensor new_ob_position = utils::vectorToTensor(obstacles[i]->getPosition());
+      torch::Tensor new_ob_position = obstacles[i]->getPosition();
       new_ob_position -= offset_;
       ob_velocities[i] = new_ob_position - ob_positions[i];
       ob_positions[i] = new_ob_position;
-      ob_rcms[i] = utils::vectorToTensor(obstacles[i]->getRCM()) - offset_;
+      ob_rcms[i] = obstacles[i]->getRCM() - offset_;
       Quaterniond ob_rot = utils::zRotation(ob_rcms[i], ob_positions[i]);
       ob_rotations[i] = utils::vectorToTensor(Vector4d(ob_rot.x(), ob_rot.y(), ob_rot.z(), ob_rot.w()));
     }

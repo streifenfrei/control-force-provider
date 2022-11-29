@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ros/ros.h>
+#include <torch/torch.h>
 #include <yaml-cpp/yaml.h>
 
 #include <Eigen/Dense>
@@ -9,6 +10,7 @@
 #include <vector>
 
 #include "time.h"
+#include "utils.h"
 
 namespace control_force_provider::backend {
 class Obstacle {
@@ -17,39 +19,39 @@ class Obstacle {
 
  protected:
   const std::string id_;
-  Eigen::Vector3d rcm_;
-  virtual Eigen::Vector3d getPositionAt(double time) = 0;
+  torch::Tensor rcm_;
+  virtual torch::Tensor getPositionAt(double time) = 0;
 
  public:
-  Obstacle(const std::string& id) : start_time(Time::now()), id_(id), rcm_(Eigen::Vector3d::Zero()){};
+  Obstacle(const std::string& id) : start_time(Time::now()), id_(id), rcm_(torch::zeros(3, utils::getTensorOptions())){};
   void reset(double offset = 0);
-  Eigen::Vector3d getPosition();
+  torch::Tensor getPosition();
   virtual ~Obstacle() = default;
 
-  [[nodiscard]] const Eigen::Vector3d& getRCM() const { return rcm_; }
-  void setRCM(Eigen::Vector3d rcm) { rcm_ = rcm; }
+  [[nodiscard]] const torch::Tensor& getRCM() const { return rcm_; }
+  void setRCM(torch::Tensor rcm) { rcm_ = rcm; }
 };
 
 class DummyObstacle : public Obstacle {
  protected:
-  Eigen::Vector3d getPositionAt(double time) override { return Eigen::Vector3d::Zero(); };
+  torch::Tensor getPositionAt(double time) override { return torch::zeros(3, utils::getTensorOptions()); };
 
  public:
-  explicit DummyObstacle(const std::string& id) : Obstacle(id) { rcm_ = Eigen::Vector3d::Zero(); };
+  explicit DummyObstacle(const std::string& id) : Obstacle(id){};
 };
 
 class WaypointsObstacle : public Obstacle {
  private:
-  std::vector<Eigen::Vector3d> waypoints_;
-  std::vector<Eigen::Vector3d> segments_;
-  std::vector<Eigen::Vector3d> segments_normalized_;
+  std::vector<torch::Tensor> waypoints_;
+  std::vector<torch::Tensor> segments_;
+  std::vector<torch::Tensor> segments_normalized_;
   std::vector<double> segments_lengths_;
   std::vector<double> segments_durations_;
   double total_duration_;
   double speed_;  // m/s
 
  protected:
-  Eigen::Vector3d getPositionAt(double time) override;
+  torch::Tensor getPositionAt(double time) override;
 
  public:
   WaypointsObstacle(const YAML::Node& config, const std::string& id);
@@ -62,7 +64,7 @@ class FramesObstacle : public Obstacle {
   std::map<double, Eigen::Affine3d>::iterator iter_;
 
  protected:
-  Eigen::Vector3d getPositionAt(double time) override;
+  torch::Tensor getPositionAt(double time) override;
 
  public:
   explicit FramesObstacle(const std::string& id);
@@ -83,7 +85,7 @@ class ObstacleLoader {
   boost::random::mt19937 rng_;
   static bool isValidFile(const std::string& file);
   std::vector<std::map<double, Eigen::Affine3d>> parseFile(const std::string& file);
-  Eigen::Vector3d estimateRCM(const std::map<double, Eigen::Affine3d>& frames);
+  torch::Tensor estimateRCM(const std::map<double, Eigen::Affine3d>& frames);
   void updateObstacles(std::vector<std::map<double, Eigen::Affine3d>> frames);
 
  public:

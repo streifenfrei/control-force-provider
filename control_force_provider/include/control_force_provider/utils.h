@@ -34,6 +34,10 @@ Eigen::VectorXd tensorToVector(const torch::Tensor &tensor);
 
 torch::Tensor vectorToTensor(const Eigen::VectorXd &vector);
 
+torch::Tensor createTensor(const std::vector<double> &args);
+
+torch::Tensor norm(const torch::Tensor &tensor);
+
 template <typename T>
 std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) {
   YAML::Node node = config[key];

@@ -46,6 +46,17 @@ torch::Tensor vectorToTensor(const VectorXd &vector) {
   return out;
 }
 
+torch::Tensor createTensor(const std::vector<double> &values) {
+  torch::Tensor out = torch::empty(values.size(), getTensorOptions());
+  auto acc = out.accessor<double, 1>();
+  for (size_t i = 0; i < values.size(); i++) {
+    acc[i] = values[i];
+  }
+  return out;
+}
+
+torch::Tensor norm(const torch::Tensor &tensor) { return torch::linalg::vector_norm(tensor, 2, {}, false, torch::kFloat64); }
+
 std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str) {
   boost::sregex_token_iterator iter(str.begin(), str.end(), boost::regex(regex), 0);
   boost::sregex_token_iterator end;
