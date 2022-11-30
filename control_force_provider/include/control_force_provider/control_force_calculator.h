@@ -19,17 +19,16 @@
 using namespace control_force_provider;
 
 namespace control_force_provider::backend {
-class ControlForceCalculator {
+class Environment {
  private:
   const inline static double workspace_bb_stopping_strength = 0.001;
-  const inline static double rcm_max_norm = 10;
-  bool rcm_available_ = false;
-  bool goal_available_ = false;
 
- protected:
-  torch::Tensor workspace_bb_origin_;
-  const torch::Tensor workspace_bb_dims_;
-  const torch::Scalar max_force_;
+  void updateDistanceVectors();
+
+ public:
+  torch::Tensor workspace_bb_origin;
+  const torch::Tensor workspace_bb_dims;
+  const torch::Scalar max_force;
   torch::Tensor ee_position;
   torch::Tensor ee_rotation;
   torch::Tensor ee_velocity;
@@ -38,42 +37,54 @@ class ControlForceCalculator {
   double start_time;
   torch::Scalar elapsed_time;
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
-  boost::shared_ptr<ObstacleLoader> obstacle_loader_;
+  boost::shared_ptr<ObstacleLoader> obstacle_loader;
   std::vector<torch::Tensor> ob_positions;
   std::vector<torch::Tensor> ob_rotations;
   std::vector<torch::Tensor> ob_velocities;
   std::vector<torch::Tensor> ob_rcms;
   std::vector<torch::Tensor> points_on_l1_;
   std::vector<torch::Tensor> points_on_l2_;
-  torch::Tensor offset_;
+  torch::Tensor offset;
+  Environment(const YAML::Node& config);
+  void setOffset(const torch::Tensor& offset_);
+  void update(const torch::Tensor& ee_position_);
+  void clipForce(torch::Tensor& force_);
+};
+
+class ControlForceCalculator {
+ private:
+  const inline static double rcm_max_norm = 10;
+  bool rcm_available_ = false;
+  bool goal_available_ = false;
+
+ protected:
+  Environment env;
   friend class Visualizer;
   friend class StateProvider;
 
   virtual void getForceImpl(torch::Tensor& force) = 0;
 
-  void updateDistanceVectors();
-
-  void setOffset(const torch::Tensor& offset);
-
  public:
-  ControlForceCalculator(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path);
+  ControlForceCalculator(const YAML::Node& config);
   void getForce(torch::Tensor& force, const torch::Tensor& ee_position_);
-  virtual ~ControlForceCalculator() = default;
-  [[nodiscard]] torch::Tensor getRCM() const { return rcm; }
+  [[nodiscard]] torch::Tensor getRCM() const { return env.rcm; }
   void setRCM(const torch::Tensor& rcm_) {
     if (utils::norm(rcm_).item().toDouble() < rcm_max_norm) {
       torch::Tensor rcm_t = rcm_;
       rcm_available_ = true;
-      rcm = rcm_t - offset_;
+      env.rcm = rcm_t - env.offset;
     }
   };
-  [[nodiscard]] torch::Tensor getGoal() const { return goal; }
+  [[nodiscard]] torch::Tensor getGoal() const { return env.goal; }
 
   void setGoal(const torch::Tensor& goal_) {
     goal_available_ = true;
-    goal = goal_ - offset_;
-    start_time = Time::now();
+    env.goal = goal_ - env.offset;
+    env.start_time = Time::now();
   };
+  virtual ~ControlForceCalculator() = default;
+
+  static boost::shared_ptr<ControlForceCalculator> createFromConfig(const YAML::Node& config, ros::NodeHandle& node_handle);
 };
 
 class PotentialFieldMethod : public ControlForceCalculator {
@@ -90,7 +101,7 @@ class PotentialFieldMethod : public ControlForceCalculator {
   void getForceImpl(torch::Tensor& force) override;
 
  public:
-  PotentialFieldMethod(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, const std::string& data_path = "");
+  PotentialFieldMethod(const YAML::Node& config);
   ~PotentialFieldMethod() override = default;
 };
 
@@ -114,10 +125,10 @@ class StateProvider {
     [[nodiscard]] unsigned int getDim() const { return length_ * tensors_.size() * history_length_; };
   };
   std::vector<StatePopulator> state_populators_;
-  static StatePopulator createPopulatorFromString(const ControlForceCalculator& cfc, const std::string& str);
+  static StatePopulator createPopulatorFromString(const Environment& env, const std::string& str);
 
  public:
-  StateProvider(const ControlForceCalculator& cfc, const std::string& state_pattern);
+  StateProvider(const Environment& env, const std::string& state_pattern);
   torch::Tensor createState();
   ~StateProvider() = default;
   [[nodiscard]] unsigned int getStateDim() const { return state_dim_; };
@@ -174,8 +185,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   void getForceImpl(torch::Tensor& force) override;
 
  public:
-  ReinforcementLearningAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle,
-                             const std::string& data_path);
+  ReinforcementLearningAgent(const YAML::Node& config, ros::NodeHandle& node_handle);
   ~ReinforcementLearningAgent() override = default;
 };
 
@@ -184,7 +194,7 @@ class DeepQNetworkAgent : public ReinforcementLearningAgent {
   torch::Tensor getActionInference(torch::Tensor& state) override;
 
  public:
-  DeepQNetworkAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle, const std::string& data_path);
+  DeepQNetworkAgent(const YAML::Node& config, ros::NodeHandle& node_handle);
 };
 
 class MonteCarloAgent : public ReinforcementLearningAgent {
@@ -192,6 +202,6 @@ class MonteCarloAgent : public ReinforcementLearningAgent {
   torch::Tensor getActionInference(torch::Tensor& state) override;
 
  public:
-  MonteCarloAgent(std::vector<boost::shared_ptr<Obstacle>> obstacles_, const YAML::Node& config, ros::NodeHandle& node_handle, const std::string& data_path);
+  MonteCarloAgent(const YAML::Node& config, ros::NodeHandle& node_handle);
 };
 }  // namespace control_force_provider::backend

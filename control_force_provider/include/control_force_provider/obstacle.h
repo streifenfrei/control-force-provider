@@ -30,6 +30,7 @@ class Obstacle {
 
   [[nodiscard]] const torch::Tensor& getRCM() const { return rcm_; }
   void setRCM(torch::Tensor rcm) { rcm_ = rcm; }
+  static std::vector<boost::shared_ptr<Obstacle>> createFromConfig(const YAML::Node& config, std::string& data_path);
 };
 
 class DummyObstacle : public Obstacle {

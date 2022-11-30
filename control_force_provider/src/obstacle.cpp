@@ -11,6 +11,34 @@ namespace fs = boost::filesystem;
 using namespace Eigen;
 using namespace control_force_provider::utils;
 namespace control_force_provider::backend {
+std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::Node& config, std::string& data_path) {
+  YAML::Node obstacle_configs = getConfigValue<YAML::Node>(config, "obstacles")[0];
+  // load obstacles
+  std::vector<boost::shared_ptr<Obstacle>> obstacles;
+  for (YAML::const_iterator it = obstacle_configs.begin(); it != obstacle_configs.end(); it++) {
+    std::string id = it->first.as<std::string>();
+    if (id == "data") {
+      data_path = it->second.as<std::string>();
+    } else {
+      const YAML::Node& ob_config = it->second;
+      std::string ob_type = getConfigValue<std::string>(ob_config, "type")[0];
+      if (ob_type == "dummy") {
+        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<DummyObstacle>(id)));
+      } else if (ob_type == "waypoints") {
+        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, id)));
+      } else if (ob_type == "csv") {
+        boost::shared_ptr<FramesObstacle> obstacle = boost::make_shared<FramesObstacle>(id);
+        if (ob_config["rcm"].IsDefined()) {
+          obstacle->setRCM(utils::tensorFromList(utils::getConfigValue<double>(ob_config, "ircm"), 0));
+        };
+        obstacles.push_back(boost::static_pointer_cast<Obstacle>(obstacle));
+      } else
+        throw ConfigError("Unknown obstacle type '" + ob_type + "'");
+    }
+  }
+  return obstacles;
+}
+
 void Obstacle::reset(double offset) {
   double now = Time::now();
   offset = std::min(offset, now);
