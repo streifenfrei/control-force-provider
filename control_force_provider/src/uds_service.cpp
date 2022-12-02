@@ -52,8 +52,8 @@ int main(int argc, char* argv[]) {
   while (!stop) {
     if (uds_socket_.available() >= vector_size) {
       read(uds_socket_, input_buffer);
-      torch::Tensor ee_position = torch::from_blob(input_buffer.data(), 3, utils::getTensorOptions());
-      torch::Tensor force = torch::empty(3, utils::getTensorOptions());
+      torch::Tensor ee_position = torch::from_blob(input_buffer.data(), {1, 3}, utils::getTensorOptions());
+      torch::Tensor force = torch::empty({1, 3}, utils::getTensorOptions());
       cfp.getForce(force, ee_position);
       // TODO: make this nicer
       Eigen::Vector3d force_eigen = utils::tensorToVector(force);

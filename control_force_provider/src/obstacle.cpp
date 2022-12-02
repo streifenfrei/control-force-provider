@@ -29,7 +29,7 @@ std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::
       } else if (ob_type == "csv") {
         boost::shared_ptr<FramesObstacle> obstacle = boost::make_shared<FramesObstacle>(id);
         if (ob_config["rcm"].IsDefined()) {
-          obstacle->setRCM(utils::tensorFromList(utils::getConfigValue<double>(ob_config, "ircm"), 0));
+          obstacle->setRCM(utils::createTensor(utils::getConfigValue<double>(ob_config, "rcm"), 0, 3));
         };
         obstacles.push_back(boost::static_pointer_cast<Obstacle>(obstacle));
       } else
@@ -39,13 +39,14 @@ std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::
   return obstacles;
 }
 
-void Obstacle::reset(double offset) {
+void Obstacle::reset(boost::optional<torch::Tensor> mask, double offset) {
   double now = Time::now();
   offset = std::min(offset, now);
-  start_time = Time::now() - offset;
+  if (!mask) mask = boost::make_optional<torch::Tensor>(torch::ones_like(start_time));
+  start_time = start_time.masked_fill(*mask, now - offset);
 }
 
-torch::Tensor Obstacle::getPosition() { return getPositionAt((Time::now() - start_time)); }
+torch::Tensor Obstacle::getPosition() { return getPositionAt((torch::full_like(start_time, Time::now(), utils::getTensorOptions()) - start_time)); }
 
 WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string& id) : Obstacle(id), speed_(getConfigValue<double>(config, "speed")[0]) {
   std::vector<double> waypoints_raw = getConfigValue<double>(config, "waypoints");
@@ -70,21 +71,27 @@ WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string
   setRCM(utils::createTensor({rcm_raw[0], rcm_raw[1], rcm_raw[2]}));
 }
 
-torch::Tensor WaypointsObstacle::getPositionAt(double time) {
-  time = fmod(time, total_duration_);
-  unsigned int segment;
-  double duration_sum = 0;
+torch::Tensor WaypointsObstacle::getPositionAt(torch::Tensor time) {
+  time = torch::fmod(time, total_duration_);
+  torch::Tensor duration_sum = torch::zeros_like(time, utils::getTensorOptions());
+  torch::Tensor found = torch::zeros_like(time, torch::kBool);
+  torch::Tensor segments_durations = torch::empty_like(time, utils::getTensorOptions());
+  torch::Tensor segments_lengths = torch::empty_like(time, utils::getTensorOptions());
+  torch::Tensor segments_normalized = torch::empty({time.size(0), 3}, utils::getTensorOptions());
+  torch::Tensor waypoints = torch::zeros({time.size(0), 3}, utils::getTensorOptions());
   for (size_t i = 0; i < segments_durations_.size(); i++) {
-    duration_sum += segments_durations_[i];
-    if (duration_sum > time) {
-      segment = i;
-      break;
-    }
+    duration_sum = torch::where(found, duration_sum, duration_sum + segments_durations_[i]);
+    torch::Tensor mask = torch::logical_and(torch::logical_not(found), duration_sum > time);
+    found = torch::logical_or(mask, found);
+    segments_durations = segments_durations.masked_fill(mask, segments_durations_[i]);
+    segments_lengths = torch::where(mask, segments_lengths_[i], segments_lengths);
+    segments_normalized = torch::where(mask, segments_normalized_[i], segments_normalized);
+    waypoints = torch::where(mask, waypoints_[i], waypoints);
   }
-  double position_on_segment = 1 - (duration_sum - time) / segments_durations_[segment];
-  double length_on_segment = segments_lengths_[segment] * position_on_segment;
-  torch::Tensor segment_part = segments_normalized_[segment] * length_on_segment;
-  return waypoints_[segment] + segment_part;
+  torch::Tensor position_on_segment = 1 - (duration_sum - time) / segments_durations;
+  torch::Tensor length_on_segment = segments_lengths * position_on_segment;
+  torch::Tensor segment_part = segments_normalized * length_on_segment;
+  return waypoints + segment_part;
 }
 
 FramesObstacle::FramesObstacle(const std::string& id) : Obstacle(id) { iter_ = frames_.begin(); }
@@ -94,12 +101,13 @@ void FramesObstacle::setFrames(std::map<double, Affine3d> frames) {
   iter_ = frames_.begin();
 }
 
-torch::Tensor FramesObstacle::getPositionAt(double time) {
+torch::Tensor FramesObstacle::getPositionAt(torch::Tensor time) {
+  // TODO: parallelize
   auto start_iter = iter_;
   do {
     auto current_iter = iter_++;
     if (iter_ == frames_.end()) {
-      if (current_iter->first < time) {  // reached end
+      if (current_iter->first < time.item().toDouble()) {  // reached end
         iter_--;
         return utils::vectorToTensor(current_iter->second.translation());
       }
@@ -109,12 +117,12 @@ torch::Tensor FramesObstacle::getPositionAt(double time) {
     auto next_iter = iter_;
     const double& t1 = current_iter->first;
     const double& t2 = next_iter->first;
-    if (t1 < time && t2 > time) {
+    if (t1 < time.item().toDouble() && t2 > time.item().toDouble()) {
       const Vector3d& p1 = current_iter->second.translation();
       const Vector3d& p2 = next_iter->second.translation();
       iter_--;
       // linear interpolation
-      return utils::vectorToTensor(p1 + (((time - t1) / (t2 - t1)) * (p2 - p1)));
+      return utils::vectorToTensor(p1 + (((time.item().toDouble() - t1) / (t2 - t1)) * (p2 - p1)));
     }
   } while (iter_ != start_iter);
 }
@@ -183,14 +191,14 @@ torch::Tensor ObstacleLoader::estimateRCM(const std::map<double, Eigen::Affine3d
     for (auto poses_iter2 = poses_iter; poses_iter2 != poses.end(); poses_iter2++) {
       if (poses_iter2 != poses_iter) {
         const Affine3d& p2 = *poses_iter2;
-        double t, s = 0;
+        torch::Tensor t, s = torch::zeros(1, utils::getTensorOptions());
         const Vector3d& a1 = p1.translation();
         Vector3d b1 = (p1 * Translation3d(0, 0, 1)).translation() - a1;
         const Vector3d& a2 = p2.translation();
         Vector3d b2 = (p2 * Translation3d(0, 0, 1)).translation() - a2;
-        utils::shortestLine(a1, b1, a2, b2, t, s);
-        if (!std::isnan(t)) points.emplace_back(a1 + t * b1);
-        if (!std::isnan(s)) points.emplace_back(a2 + s * b2);
+        utils::shortestLine(utils::vectorToTensor(a1), utils::vectorToTensor(b1), utils::vectorToTensor(a2), utils::vectorToTensor(b2), t, s);
+        if (!std::isnan(t.item().toDouble())) points.emplace_back(a1 + t.item().toDouble() * b1);
+        if (!std::isnan(s.item().toDouble())) points.emplace_back(a2 + s.item().toDouble() * b2);
       }
     }
   }

@@ -31,15 +31,15 @@ boost::shared_ptr<ControlForceCalculator> ControlForceCalculator::createFromConf
 }
 
 Environment::Environment(const YAML::Node& config)
-    : ee_position(torch::zeros(3, utils::getTensorOptions())),
-      ee_rotation(torch::zeros(4, utils::getTensorOptions())),
-      ee_velocity(torch::zeros(3, utils::getTensorOptions())),
+    : ee_position(torch::zeros({1, 3}, utils::getTensorOptions())),
+      ee_rotation(torch::zeros({1, 4}, utils::getTensorOptions())),
+      ee_velocity(torch::zeros({1, 3}, utils::getTensorOptions())),
       rcm(torch::zeros(3, utils::getTensorOptions())),
-      goal(torch::zeros(3, utils::getTensorOptions())),
+      goal(torch::zeros({1, 3}, utils::getTensorOptions())),
       start_time(0),
       elapsed_time(0),
-      workspace_bb_origin(utils::tensorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 0)),
-      workspace_bb_dims(utils::tensorFromList(utils::getConfigValue<double>(config, "workspace_bb"), 3)),
+      workspace_bb_origin(utils::createTensor(utils::getConfigValue<double>(config, "workspace_bb"), 0, 3)),
+      workspace_bb_dims(utils::createTensor(utils::getConfigValue<double>(config, "workspace_bb"), 3, 6)),
       max_force(utils::getConfigValue<double>(config, "max_force")[0]),
       offset(torch::zeros(3, utils::getTensorOptions())) {
   std::string data_path;
@@ -48,11 +48,11 @@ Environment::Environment(const YAML::Node& config)
   int reference_obstacle = -1;
   for (auto& obstacle : obstacles) {
     ob_rcms.push_back(obstacle->getRCM());
-    ob_positions.push_back(torch::zeros(3, utils::getTensorOptions()));
-    ob_rotations.push_back(torch::zeros(4, utils::getTensorOptions()));
-    ob_velocities.push_back(torch::zeros(3, utils::getTensorOptions()));
-    points_on_l1_.push_back(torch::zeros(3, utils::getTensorOptions()));
-    points_on_l2_.push_back(torch::zeros(3, utils::getTensorOptions()));
+    ob_positions.push_back(torch::zeros({1, 3}, utils::getTensorOptions()));
+    ob_rotations.push_back(torch::zeros({1, 4}, utils::getTensorOptions()));
+    ob_velocities.push_back(torch::zeros({1, 3}, utils::getTensorOptions()));
+    points_on_l1_.push_back(torch::zeros({1, 3}, utils::getTensorOptions()));
+    points_on_l2_.push_back(torch::zeros({1, 3}, utils::getTensorOptions()));
     boost::shared_ptr<FramesObstacle> frames_obstacle = boost::dynamic_pointer_cast<FramesObstacle>(obstacle);
     if (frames_obstacle) {
       if (frames_obstacle->getRCM().equal(torch::zeros(3, utils::getTensorOptions()))) {
@@ -70,8 +70,7 @@ Environment::Environment(const YAML::Node& config)
 void Environment::update(const torch::Tensor& ee_position_) {
   torch::Tensor ee_position_off = ee_position_ - offset;
   ee_position = ee_position_off;
-  Quaterniond ee_rot = utils::zRotation(rcm - offset, ee_position);
-  ee_rotation = utils::vectorToTensor(Vector4d(ee_rot.x(), ee_rot.y(), ee_rot.z(), ee_rot.w()));
+  ee_rotation = utils::zRotation(rcm - offset, ee_position);
   elapsed_time = Time::now() - start_time;
   for (size_t i = 0; i < obstacles.size(); i++) {
     torch::Tensor new_ob_position = obstacles[i]->getPosition();
@@ -79,43 +78,42 @@ void Environment::update(const torch::Tensor& ee_position_) {
     ob_velocities[i] = new_ob_position - ob_positions[i];
     ob_positions[i] = new_ob_position;
     ob_rcms[i] = obstacles[i]->getRCM() - offset;
-    Quaterniond ob_rot = utils::zRotation(ob_rcms[i], ob_positions[i]);
-    ob_rotations[i] = utils::vectorToTensor(Vector4d(ob_rot.x(), ob_rot.y(), ob_rot.z(), ob_rot.w()));
+    ob_rotations[i] = utils::zRotation(ob_rcms[i], ob_positions[i]);
   }
-  Vector3d a1 = utils::tensorToVector(rcm);
-  Vector3d b1 = utils::tensorToVector(ee_position) - a1;
+  torch::Tensor a1 = rcm;
+  torch::Tensor b1 = ee_position - a1;
   for (size_t i = 0; i < obstacles.size(); i++) {
-    double t, s = 0;
+    torch::Tensor t, s = torch::empty(ee_position.size(0), utils::getTensorOptions());
     const torch::Tensor& a2 = ob_rcms[i];
-    Vector3d b2 = utils::tensorToVector(ob_positions[i] - a2);
-    utils::shortestLine(a1, b1, utils::tensorToVector(a2), b2, t, s);
-    t = boost::algorithm::clamp(t, 0, 1);
-    s = boost::algorithm::clamp(s, 0, 1);
-    points_on_l1_[i] = utils::vectorToTensor(a1 + t * b1);
-    points_on_l2_[i] = utils::vectorToTensor(utils::tensorToVector(a2) + s * b2);
+    torch::Tensor b2 = ob_positions[i] - a2;
+    utils::shortestLine(a1, b1, a2, b2, t, s);
+    t = torch::clamp(t, 0, 1);
+    s = torch::clamp(s, 0, 1);
+    points_on_l1_[i] = a1 + t * b1;
+    points_on_l2_[i] = a2 + s * b2;
   }
 }
 
 void Environment::clipForce(torch::Tensor& force_) {
   torch::Tensor next_pos = ee_position + force_;
-  double distance_to_wall = INFINITY;
-  double next_distance_to_wall = INFINITY;
-  auto workspace_bb_origin_acc = workspace_bb_origin.accessor<double, 1>();
-  auto workspace_bb_dims_acc = workspace_bb_dims.accessor<double, 1>();
-  for (size_t i = 0; i < 3; i++) {
-    distance_to_wall = std::min(distance_to_wall, utils::tensorToVector(ee_position)[i] - workspace_bb_origin_acc[i]);
-    distance_to_wall = std::min(distance_to_wall, workspace_bb_origin_acc[i] + workspace_bb_dims_acc[i] - utils::tensorToVector(ee_position)[i]);
-    next_distance_to_wall = std::min(next_distance_to_wall, utils::tensorToVector(next_pos)[i] - workspace_bb_origin_acc[i]);
-    next_distance_to_wall = std::min(next_distance_to_wall, workspace_bb_origin_acc[i] + workspace_bb_dims_acc[i] - utils::tensorToVector(next_pos)[i]);
-    next_pos[i] =
-        boost::algorithm::clamp(utils::tensorToVector(next_pos)[i], workspace_bb_origin_acc[i], workspace_bb_origin_acc[i] + workspace_bb_dims_acc[i]);
-  }
-  if (next_distance_to_wall < distance_to_wall) {
-    force_ = next_pos - ee_position;
-    if (distance_to_wall > 0) {
-      double max_magnitude = distance_to_wall * workspace_bb_stopping_strength;
-      double magnitude = utils::norm(force_).item().toDouble();
-      if (magnitude > max_magnitude) force_ = force_ / magnitude * max_magnitude;
+  torch::Tensor distance_to_wall = torch::full_like(force_, INFINITY);
+  torch::Tensor next_distance_to_wall = torch::full_like(force_, INFINITY);
+  distance_to_wall = torch::min(distance_to_wall, ee_position - workspace_bb_origin);
+  distance_to_wall = torch::min(distance_to_wall, workspace_bb_origin + workspace_bb_dims - ee_position);
+  distance_to_wall = std::get<0>(torch::min(distance_to_wall, -1));
+  next_distance_to_wall = torch::min(next_distance_to_wall, next_pos - workspace_bb_origin);
+  next_distance_to_wall = torch::min(next_distance_to_wall, workspace_bb_origin + workspace_bb_dims - next_pos);
+  next_distance_to_wall = std::get<0>(torch::min(next_distance_to_wall, -1));
+  next_pos = torch::clamp(next_pos, workspace_bb_origin, workspace_bb_origin + workspace_bb_dims);
+  torch::Tensor mask = next_distance_to_wall < distance_to_wall;
+  if (torch::any(mask).item().toBool()) {
+    force_ = torch::where(mask, next_pos - ee_position, force_);
+    mask = torch::logical_and(mask, distance_to_wall > 0);
+    if (torch::any(mask).item().toBool()) {
+      torch::Tensor max_magnitude = distance_to_wall * workspace_bb_stopping_strength;
+      torch::Tensor magnitude = utils::norm(force_);
+      mask = torch::logical_and(mask, magnitude > max_magnitude);
+      if (torch::any(mask).item().toBool()) force_ = torch::where(mask, force_ / magnitude * max_magnitude, force_);
     }
   }
 }
@@ -279,10 +277,10 @@ EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacl
       begin_max_offset_(utils::getConfigValue<double>(config, "begin_max_offset")[0]),
       start_(torch::zeros(3, utils::getTensorOptions())),
       goal_(torch::zeros(3, utils::getTensorOptions())),
-      start_bb_origin(utils::tensorFromList(utils ::getConfigValue<double>(config, "start_bb"), 0)),
-      start_bb_dims(utils::tensorFromList(utils::getConfigValue<double>(config, "start_bb"), 3)),
-      goal_bb_origin(utils::tensorFromList(utils::getConfigValue<double>(config, "goal_bb"), 0)),
-      goal_bb_dims(utils::tensorFromList(utils::getConfigValue<double>(config, "goal_bb"), 3)) {}
+      start_bb_origin(utils::createTensor(utils ::getConfigValue<double>(config, "start_bb"), 0, 3)),
+      start_bb_dims(utils::createTensor(utils::getConfigValue<double>(config, "start_bb"), 3, 6)),
+      goal_bb_origin(utils::createTensor(utils::getConfigValue<double>(config, "goal_bb"), 0, 3)),
+      goal_bb_dims(utils::createTensor(utils::getConfigValue<double>(config, "goal_bb"), 3, 6)) {}
 
 void EpisodeContext::generateEpisode() {
   auto start_bb_origin_acc = start_bb_origin.accessor<double, 1>();
@@ -297,7 +295,7 @@ void EpisodeContext::generateEpisode() {
 }
 
 void EpisodeContext::startEpisode() {
-  double offset = boost::random::uniform_real_distribution<>(0, begin_max_offset_)(rng_);
+  torch::Tensor offset = begin_max_offset_ * torch::rand(1, utils::getTensorOptions());
   for (auto& obstacle : obstacles_) obstacle->reset(offset);
 }
 

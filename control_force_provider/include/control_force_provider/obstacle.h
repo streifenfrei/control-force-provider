@@ -5,6 +5,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <Eigen/Dense>
+#include <boost/optional.hpp>
 #include <boost/random.hpp>
 #include <boost/shared_ptr.hpp>
 #include <vector>
@@ -15,16 +16,17 @@
 namespace control_force_provider::backend {
 class Obstacle {
  private:
-  double start_time;
+  torch::Tensor start_time;
 
  protected:
   const std::string id_;
   torch::Tensor rcm_;
-  virtual torch::Tensor getPositionAt(double time) = 0;
+  virtual torch::Tensor getPositionAt(torch::Tensor time) = 0;
 
  public:
-  Obstacle(const std::string& id) : start_time(Time::now()), id_(id), rcm_(torch::zeros(3, utils::getTensorOptions())){};
-  void reset(double offset = 0);
+  Obstacle(const std::string& id, unsigned int batch_size = 1)
+      : start_time(torch::full(batch_size, Time::now(), utils::getTensorOptions())), id_(id), rcm_(torch::zeros(3, utils::getTensorOptions())){};
+  void reset(boost::optional<torch::Tensor> mask, double offset = 0);
   torch::Tensor getPosition();
   virtual ~Obstacle() = default;
 
@@ -35,7 +37,7 @@ class Obstacle {
 
 class DummyObstacle : public Obstacle {
  protected:
-  torch::Tensor getPositionAt(double time) override { return torch::zeros(3, utils::getTensorOptions()); };
+  torch::Tensor getPositionAt(torch::Tensor time) override { return torch::zeros({time.size(0), 3}, utils::getTensorOptions()); };
 
  public:
   explicit DummyObstacle(const std::string& id) : Obstacle(id){};
@@ -52,7 +54,7 @@ class WaypointsObstacle : public Obstacle {
   double speed_;  // m/s
 
  protected:
-  torch::Tensor getPositionAt(double time) override;
+  torch::Tensor getPositionAt(torch::Tensor time) override;
 
  public:
   WaypointsObstacle(const YAML::Node& config, const std::string& id);
@@ -65,7 +67,7 @@ class FramesObstacle : public Obstacle {
   std::map<double, Eigen::Affine3d>::iterator iter_;
 
  protected:
-  torch::Tensor getPositionAt(double time) override;
+  torch::Tensor getPositionAt(torch::Tensor time) override;
 
  public:
   explicit FramesObstacle(const std::string& id);

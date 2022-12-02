@@ -34,9 +34,13 @@ Eigen::VectorXd tensorToVector(const torch::Tensor &tensor);
 
 torch::Tensor vectorToTensor(const Eigen::VectorXd &vector);
 
-torch::Tensor createTensor(const std::vector<double> &args);
+torch::Tensor createTensor(const std::vector<double> &args, unsigned int start = 0, unsigned int end = -1);
 
 torch::Tensor norm(const torch::Tensor &tensor);
+
+void normalize(torch::Tensor &tensor);
+
+torch::Tensor dot(const torch::Tensor &tensor1, const torch::Tensor &tensor2);
 
 template <typename T>
 std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) {
@@ -63,12 +67,10 @@ std::vector<T> getConfigValue(const YAML::Node &config, const std::string &key) 
 
 std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str);
 
-torch::Tensor tensorFromList(const std::vector<double> &list, unsigned int start_index);
-
 std::string readFile(const std::string &file);
 
-void shortestLine(const Eigen::Vector3d &a1, const Eigen::Vector3d &b1, const Eigen::Vector3d &a2, const Eigen::Vector3d &b2, double &t, double &s);
+void shortestLine(const torch::Tensor &a1, const torch::Tensor &b1, const torch::Tensor &a2, const torch::Tensor &b2, torch::Tensor &t, torch::Tensor &s);
 
-Eigen::Quaterniond zRotation(const torch::Tensor &p1, const torch::Tensor &p2);
+torch::Tensor zRotation(const torch::Tensor &p1, const torch::Tensor &p2);
 }  // namespace utils
 }  // namespace control_force_provider
