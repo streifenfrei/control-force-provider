@@ -129,11 +129,11 @@ void Environment::setOffset(const torch::Tensor& offset_) {
 ControlForceCalculator::ControlForceCalculator(const YAML::Node& config) : env(config) {}
 
 void ControlForceCalculator::getForce(torch::Tensor& force, const torch::Tensor& ee_position_) {
-  // TODO: use tensors only
   if (!goal_available_) setGoal(ee_position_ - env.offset);
   if (rcm_available_) {
     env.update(ee_position_);
     getForceImpl(force);
+    env.clipForce(force);
   }
 }
 
