@@ -61,7 +61,9 @@ torch::Tensor norm(const torch::Tensor &tensor) { return torch::linalg::vector_n
 void normalize(torch::Tensor &tensor) { tensor /= utils::norm(tensor); }
 
 torch::Tensor dot(const torch::Tensor &tensor1, const torch::Tensor &tensor2) {
-  return torch::bmm(tensor1.view({tensor1.size(0), 1, tensor1.size(1)}), tensor2.view({tensor2.size(0), tensor2.size(1), 1})).squeeze(-1);
+  int batch_size = std::max(tensor1.size(0), tensor2.size(0));
+  int dim2 = tensor2.size(1);
+  return torch::bmm(tensor1.expand({batch_size, dim2}).view({batch_size, 1, dim2}), tensor2.expand({batch_size, dim2}).view({batch_size, dim2, 1})).squeeze(-1);
 }
 
 std::vector<std::string> regexFindAll(const std::string &regex, const std::string &str) {

@@ -8,7 +8,7 @@ namespace control_force_provider {
 
 class Time {
  private:
-  static inline boost::shared_ptr<Time> instance = nullptr;
+  static boost::shared_ptr<Time> instance;
   virtual double now_() = 0;
 
  protected:
@@ -20,7 +20,7 @@ class Time {
   template <typename T>
   static void setType() {
     static_assert(std::is_base_of<Time, T>());
-    instance = boost::dynamic_pointer_cast<Time>(boost::make_shared<T>());
+    instance = boost::make_shared<T>();
   }
 };
 

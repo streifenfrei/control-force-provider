@@ -4,6 +4,8 @@
 
 namespace control_force_provider {
 
+boost::shared_ptr<Time> Time::instance = nullptr;
+
 boost::shared_ptr<Time> Time::getInstance() {
   if (!instance) setType<ROSTime>();
   return instance;

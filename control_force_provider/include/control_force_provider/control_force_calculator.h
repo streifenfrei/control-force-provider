@@ -26,6 +26,7 @@ class Environment {
   void updateDistanceVectors();
 
  public:
+  // TODO: use getter and setter
   torch::Tensor workspace_bb_origin;
   const torch::Tensor workspace_bb_dims;
   const torch::Scalar max_force;
@@ -45,7 +46,7 @@ class Environment {
   std::vector<torch::Tensor> points_on_l1_;
   std::vector<torch::Tensor> points_on_l2_;
   torch::Tensor offset;
-  Environment(const YAML::Node& config);
+  Environment(const YAML::Node& config, int batch_size = 1);
   void setOffset(const torch::Tensor& offset_);
   void update(const torch::Tensor& ee_position_);
   void clipForce(torch::Tensor& force_);
@@ -121,7 +122,7 @@ class StateProvider {
     unsigned int history_length_ = 1;
     unsigned int history_stride_ = 0;
     StatePopulator() = default;
-    void populate(torch::Tensor& state, int& index);
+    void populate(torch::Tensor& state);
     [[nodiscard]] unsigned int getDim() const { return length_ * tensors_.size() * history_length_; };
   };
   std::vector<StatePopulator> state_populators_;
@@ -140,17 +141,19 @@ class EpisodeContext {
   torch::Tensor goal_;
   std::vector<boost::shared_ptr<Obstacle>>& obstacles_;
   boost::shared_ptr<ObstacleLoader>& obstacle_loader_;
-  boost::random::mt19937 rng_;
   const torch::Tensor start_bb_origin;
   const torch::Tensor start_bb_dims;
   const torch::Tensor goal_bb_origin;
   const torch::Tensor goal_bb_dims;
-  double begin_max_offset_;
+  const double begin_max_offset_;
   friend class Visualizer;
 
  public:
-  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles_, boost::shared_ptr<ObstacleLoader>& obstacle_loader, const YAML::Node& config);
+  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles_, boost::shared_ptr<ObstacleLoader>& obstacle_loader, const YAML::Node& config,
+                 unsigned int batch_size = 1);
+  void generateEpisode(const torch::Tensor& mask);
   void generateEpisode();
+  void startEpisode(const torch::Tensor& mask);
   void startEpisode();
   const torch::Tensor& getStart() const { return start_; };
   const torch::Tensor& getGoal() const { return goal_; };

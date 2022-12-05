@@ -11,7 +11,7 @@ namespace fs = boost::filesystem;
 using namespace Eigen;
 using namespace control_force_provider::utils;
 namespace control_force_provider::backend {
-std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::Node& config, std::string& data_path) {
+std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::Node& config, std::string& data_path, int batch_size) {
   YAML::Node obstacle_configs = getConfigValue<YAML::Node>(config, "obstacles")[0];
   // load obstacles
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
@@ -23,11 +23,11 @@ std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::
       const YAML::Node& ob_config = it->second;
       std::string ob_type = getConfigValue<std::string>(ob_config, "type")[0];
       if (ob_type == "dummy") {
-        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<DummyObstacle>(id)));
+        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<DummyObstacle>(id, batch_size)));
       } else if (ob_type == "waypoints") {
-        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, id)));
+        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, id, batch_size)));
       } else if (ob_type == "csv") {
-        boost::shared_ptr<FramesObstacle> obstacle = boost::make_shared<FramesObstacle>(id);
+        boost::shared_ptr<FramesObstacle> obstacle = boost::make_shared<FramesObstacle>(id, batch_size);
         if (ob_config["rcm"].IsDefined()) {
           obstacle->setRCM(utils::createTensor(utils::getConfigValue<double>(ob_config, "rcm"), 0, 3));
         };
@@ -39,16 +39,18 @@ std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::
   return obstacles;
 }
 
-void Obstacle::reset(boost::optional<torch::Tensor> mask, double offset) {
-  double now = Time::now();
-  offset = std::min(offset, now);
-  if (!mask) mask = boost::make_optional<torch::Tensor>(torch::ones_like(start_time));
-  start_time = start_time.masked_fill(*mask, now - offset);
+void Obstacle::reset(const torch::Tensor& mask, const torch::Tensor& offset) {
+  torch::Tensor now = torch::full(1, Time::now(), utils::getTensorOptions());
+  torch::Tensor offset_ = torch::min(offset, now);
+  start_time = torch::where(mask, now - offset, start_time);
 }
+
+void Obstacle::reset(const torch::Tensor& offset) { this->reset(torch::ones_like(start_time), offset); }
 
 torch::Tensor Obstacle::getPosition() { return getPositionAt((torch::full_like(start_time, Time::now(), utils::getTensorOptions()) - start_time)); }
 
-WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string& id) : Obstacle(id), speed_(getConfigValue<double>(config, "speed")[0]) {
+WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string& id, int batch_size)
+    : Obstacle(id, batch_size), speed_(getConfigValue<double>(config, "speed")[0]) {
   std::vector<double> waypoints_raw = getConfigValue<double>(config, "waypoints");
   unsigned int waypoints_raw_length = waypoints_raw.size() - (waypoints_raw.size() % 3);
   for (size_t i = 0; i < waypoints_raw_length; i += 3) {
@@ -94,7 +96,7 @@ torch::Tensor WaypointsObstacle::getPositionAt(torch::Tensor time) {
   return waypoints + segment_part;
 }
 
-FramesObstacle::FramesObstacle(const std::string& id) : Obstacle(id) { iter_ = frames_.begin(); }
+FramesObstacle::FramesObstacle(const std::string& id, int batch_size) : Obstacle(id, batch_size) { iter_ = frames_.begin(); }
 
 void FramesObstacle::setFrames(std::map<double, Affine3d> frames) {
   frames_ = std::move(frames);
