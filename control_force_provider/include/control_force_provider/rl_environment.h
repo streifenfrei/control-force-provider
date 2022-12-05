@@ -20,9 +20,10 @@ class TorchRLEnvironment : ROSNode {
   boost::shared_ptr<StateProvider> state_provider_;
   ros::NodeHandle node_handle_{};
   ros::AsyncSpinner spinner_{1};
+  std::map<std::string, torch::Tensor> getStateDict();
 
  public:
   TorchRLEnvironment(const std::string& config_file);
-  torch::Tensor observe(const torch::Tensor& actions);
+  std::map<std::string, torch::Tensor> observe(const torch::Tensor& actions);
 };
 }  // namespace control_force_provider::backend

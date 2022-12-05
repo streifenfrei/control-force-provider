@@ -1,5 +1,6 @@
 #include "control_force_provider/rl_environment.h"
 
+#include <pybind11/stl.h>
 #include <torch/extension.h>
 
 using namespace control_force_provider;
@@ -25,7 +26,24 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file) : ROSNode
   spinner_.start();
 }
 
-torch::Tensor TorchRLEnvironment::observe(const Tensor& actions) {
+std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
+  std::map<std::string, torch::Tensor> out;
+  out["state"] = state_provider_->createState();
+  out["robot_position"] = torch::empty_like(env_->ee_position).copy_(env_->ee_position);
+  out["robot_velocity"] = torch::empty_like(env_->ee_velocity).copy_(env_->ee_velocity);
+  out["robot_rcm"] = torch::empty_like(env_->rcm).copy_(env_->rcm);
+  out["obstacles_positions"] = torch::cat(TensorList(&env_->ob_positions[0], env_->ob_positions.size()));
+  out["obstacles_velocities"] = torch::cat(TensorList(&env_->ob_velocities[0], env_->ob_velocities.size()));
+  out["obstacles_rcms"] = torch::cat(TensorList(&env_->ob_rcms[0], env_->ob_rcms.size()));
+  out["points_on_l1"] = torch::cat(TensorList(&env_->points_on_l1_[0], env_->points_on_l1_.size()));
+  out["points_on_l2"] = torch::cat(TensorList(&env_->points_on_l2_[0], env_->points_on_l2_.size()));
+  out["goal"] = torch::empty_like(env_->goal).copy_(env_->goal);
+  out["workspace_bb_origin"] = torch::empty_like(env_->workspace_bb_origin).copy_(env_->workspace_bb_origin);
+  out["workspace_bb_dims"] = torch::empty_like(env_->workspace_bb_dims).copy_(env_->workspace_bb_dims);
+  return out;
+}
+
+std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& actions) {
   torch::Tensor actions_copy = actions;
   env_->clipForce(actions_copy);
   ee_positions_ += actions_copy * interval_duration_;
@@ -40,10 +58,12 @@ torch::Tensor TorchRLEnvironment::observe(const Tensor& actions) {
   env_->goal = episode_context_->getGoal();
   env_->update(ee_positions_);
   *time_ += interval_duration_ * 1e-3;
-  return state_provider_->createState();
+  return getStateDict();
 }
 
 PYBIND11_MODULE(native, module) {
-  py::class_<TorchRLEnvironment>(module, "RLEnvironment").def(py::init<std::string>()).def("observe", &TorchRLEnvironment::observe);
+  py::class_<TorchRLEnvironment>(module, "RLEnvironment")
+      .def(py::init<std::string>())
+      .def("observe", &TorchRLEnvironment::observe, py::return_value_policy::move);
 }
 }  // namespace control_force_provider::backend
