@@ -10,9 +10,8 @@ namespace control_force_provider::backend {
 TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file) : ROSNode("cfp_rl_environment") {
   YAML::Node config = YAML::LoadFile(config_file);
   Time::setType<ManualTime>();
-  boost::shared_ptr<Time> time = Time::getInstance();
-  time_ = boost::dynamic_pointer_cast<ManualTime>(time);
-  batch_size_ = utils::getConfigValue<int>(config["rl"], "batch_size_exploration")[0];
+  time_ = boost::static_pointer_cast<ManualTime>(Time::getInstance());
+  batch_size_ = utils::getConfigValue<int>(config["rl"], "robot_batch")[0];
   env_ = boost::make_shared<Environment>(config, batch_size_);
   episode_context_ = boost::make_shared<EpisodeContext>(env_->obstacles, env_->obstacle_loader, config["rl"], batch_size_);
   episode_context_->generateEpisode();

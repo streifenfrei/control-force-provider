@@ -3,6 +3,7 @@
 import rospy
 import yaml
 import signal
+import torch
 import control_force_provider.rl as rl
 from control_force_provider.native import RLEnvironment
 from argparse import ArgumentParser
@@ -17,7 +18,8 @@ action_dim = 3
 def service_handle(request):
     state_dict = {}
     for field in request.__slots__:
-        state_dict[field] = getattr(request, field)
+        value = getattr(request, field)
+        state_dict[field] = torch.tensor(value).unsqueeze(0)
     action = rl_context.update(state_dict).tolist()
     action.append(0)
     return UpdateNetworkResponse(action)
@@ -54,11 +56,13 @@ def main():
     arg_parser = ArgumentParser()
     arg_parser.add_argument("-s", "--service", action="store_true")
     args, _ = arg_parser.parse_known_args()
-    config = rospy.get_param("control_force_provider/config")
-    with open(config, "r") as f:
+    config_file = rospy.get_param("control_force_provider/config")
+    with open(config_file, "r") as f:
         config = yaml.safe_load(f)
     if config["algorithm"] != "rl" or not config["rl"]["train"]:
         return
+    if args.service:
+        config["robot_batch"] = 1
     load_context(config)
     rospy.init_node("rl_training", anonymous=True)
     signal.signal(signal.SIGINT, signal_handle)
@@ -67,10 +71,9 @@ def main():
         rospy.Service("update_network", UpdateNetwork, service_handle)
         rospy.spin()
     else:
-        rl_environment = RLEnvironment()
+        rl_environment = RLEnvironment(config_file)
+        state_dict = rl_environment.observe(torch.zeros((rl_context.robot_batch, 3)))
         while not stop:
-            states = rl_environment.getState()
-            actions = rl_context.update(states)
-            rl_environment.update(actions)
+            state_dict = rl_environment.observe(rl_context.update(state_dict))
 
 if __name__ == '__main__': main()
