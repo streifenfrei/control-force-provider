@@ -28,17 +28,17 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file) : ROSNode
 std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
   std::map<std::string, torch::Tensor> out;
   out["state"] = state_provider_->createState();
-  out["robot_position"] = torch::empty_like(env_->ee_position).copy_(env_->ee_position);
-  out["robot_velocity"] = torch::empty_like(env_->ee_velocity).copy_(env_->ee_velocity);
-  out["robot_rcm"] = torch::empty_like(env_->rcm).copy_(env_->rcm);
-  out["obstacles_positions"] = torch::cat(TensorList(&env_->ob_positions[0], env_->ob_positions.size()));
-  out["obstacles_velocities"] = torch::cat(TensorList(&env_->ob_velocities[0], env_->ob_velocities.size()));
-  out["obstacles_rcms"] = torch::cat(TensorList(&env_->ob_rcms[0], env_->ob_rcms.size()));
-  out["points_on_l1"] = torch::cat(TensorList(&env_->points_on_l1_[0], env_->points_on_l1_.size()));
-  out["points_on_l2"] = torch::cat(TensorList(&env_->points_on_l2_[0], env_->points_on_l2_.size()));
-  out["goal"] = torch::empty_like(env_->goal).copy_(env_->goal);
-  out["workspace_bb_origin"] = torch::empty_like(env_->workspace_bb_origin).copy_(env_->workspace_bb_origin);
-  out["workspace_bb_dims"] = torch::empty_like(env_->workspace_bb_dims).copy_(env_->workspace_bb_dims);
+  out["robot_position"] = env_->ee_position.clone();
+  out["robot_velocity"] = env_->ee_velocity.clone();
+  out["robot_rcm"] = env_->rcm.clone();
+  out["obstacles_positions"] = torch::cat(TensorList(&env_->ob_positions[0], env_->ob_positions.size()), -1);
+  out["obstacles_velocities"] = torch::cat(TensorList(&env_->ob_velocities[0], env_->ob_velocities.size()), -1);
+  out["obstacles_rcms"] = torch::cat(TensorList(&env_->ob_rcms[0], env_->ob_rcms.size())), -1;
+  out["points_on_l1"] = torch::cat(TensorList(&env_->points_on_l1_[0], env_->points_on_l1_.size()), -1);
+  out["points_on_l2"] = torch::cat(TensorList(&env_->points_on_l2_[0], env_->points_on_l2_.size()), -1);
+  out["goal"] = env_->goal.clone();
+  out["workspace_bb_origin"] = env_->workspace_bb_origin.clone();
+  out["workspace_bb_dims"] = env_->workspace_bb_dims.clone();
   return out;
 }
 
