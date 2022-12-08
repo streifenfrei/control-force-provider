@@ -27,18 +27,18 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file) : ROSNode
 
 std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
   std::map<std::string, torch::Tensor> out;
-  out["state"] = state_provider_->createState();
-  out["robot_position"] = env_->ee_position.clone();
-  out["robot_velocity"] = env_->ee_velocity.clone();
-  out["robot_rcm"] = env_->rcm.clone();
-  out["obstacles_positions"] = torch::cat(TensorList(&env_->ob_positions[0], env_->ob_positions.size()), -1);
-  out["obstacles_velocities"] = torch::cat(TensorList(&env_->ob_velocities[0], env_->ob_velocities.size()), -1);
-  out["obstacles_rcms"] = torch::cat(TensorList(&env_->ob_rcms[0], env_->ob_rcms.size())), -1;
-  out["points_on_l1"] = torch::cat(TensorList(&env_->points_on_l1_[0], env_->points_on_l1_.size()), -1);
-  out["points_on_l2"] = torch::cat(TensorList(&env_->points_on_l2_[0], env_->points_on_l2_.size()), -1);
-  out["goal"] = env_->goal.clone();
-  out["workspace_bb_origin"] = env_->workspace_bb_origin.clone();
-  out["workspace_bb_dims"] = env_->workspace_bb_dims.clone();
+  out["state"] = state_provider_->createState().to(torch::kFloat32);
+  out["robot_position"] = env_->ee_position.to(torch::kFloat32, false, true);
+  out["robot_velocity"] = env_->ee_velocity.to(torch::kFloat32, false, true);
+  out["robot_rcm"] = env_->rcm.to(torch::kFloat32, false, true);
+  out["obstacles_positions"] = torch::cat(TensorList(&env_->ob_positions[0], env_->ob_positions.size()), -1).to(torch::kFloat32);
+  out["obstacles_velocities"] = torch::cat(TensorList(&env_->ob_velocities[0], env_->ob_velocities.size()), -1).to(torch::kFloat32);
+  out["obstacles_rcms"] = torch::cat(TensorList(&env_->ob_rcms[0], env_->ob_rcms.size()), -1).to(torch::kFloat32);
+  out["points_on_l1"] = torch::cat(TensorList(&env_->points_on_l1_[0], env_->points_on_l1_.size()), -1).to(torch::kFloat32);
+  out["points_on_l2"] = torch::cat(TensorList(&env_->points_on_l2_[0], env_->points_on_l2_.size()), -1).to(torch::kFloat32);
+  out["goal"] = env_->goal.to(torch::kFloat32, false, true);
+  out["workspace_bb_origin"] = env_->workspace_bb_origin.to(torch::kFloat32, false, true);
+  out["workspace_bb_dims"] = env_->workspace_bb_dims.to(torch::kFloat32, false, true);
   return out;
 }
 

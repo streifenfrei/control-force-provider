@@ -25,6 +25,7 @@ class MonteCarloContext(RLContext):
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
 
     def _update_impl(self, state_dict, reward):
+        # TODO: use tensors batches
         if reward is not None:
             self.total_reward += reward
         else:

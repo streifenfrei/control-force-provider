@@ -3,12 +3,10 @@ import re
 import torch
 import numpy as np
 import rospy
-from functools import reduce
 from enum import Enum
 from abc import ABC, abstractmethod
 from concurrent import futures
 from torch.utils.tensorboard import SummaryWriter
-from scipy.spatial.transform import Rotation
 from collections import namedtuple, defaultdict
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -71,49 +69,71 @@ class StateAugmenter:
 
 class RewardFunction:
     def __init__(self, fmax, interval_duration, dc, mc, max_penalty, dg, rg):
-        self.fmax = float(fmax)
-        self.dc = float(dc)
-        self.mc = float(mc)
-        self.max_penalty = max_penalty
-        self.dg = float(dg)
-        self.rg = float(rg)
+        self.fmax = torch.tensor(float(fmax))
+        self.dc = torch.tensor(float(dc))
+        self.mc = torch.tensor(float(mc))
+        self.max_penalty = torch.tensor(float(max_penalty))
+        self.dg = torch.tensor(float(dg))
+        self.rg = torch.tensor(float(rg))
         self.interval_duration = float(interval_duration)
 
-    def __call__(self, state_dict, last_state_dict):
-        goal = np.array(state_dict["goal"])[:3]
-        robot_position = np.array(state_dict["robot_position"])[:3]
-        last_robot_position = np.array(last_state_dict["robot_position"])[:3]
-        distance_vectors = (np.array(state_dict["points_on_l2"][x:x + 3]) - np.array(state_dict["points_on_l1"][x:x + 3]) for x in range(0, len(state_dict["points_on_l1"]), 3))
-        distance_to_goal = np.linalg.norm(goal - robot_position)
-        motion_reward = (np.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration)
-        collision_penalty = reduce(lambda x, y: x + y, ((self.dc / (np.linalg.norm(o) + 1e-10)) ** self.mc for o in distance_vectors))
-        collision_penalty = 0 if np.isnan(collision_penalty) or any(np.any(np.isnan(x)) for x in distance_vectors) else - np.minimum(collision_penalty, self.max_penalty)
-        goal_reward = 0 if distance_to_goal > self.dg else self.rg
+    def __call__(self, state_dict, last_state_dict, mask):
+        goal = state_dict["goal"]
+        if last_state_dict is None:
+            out = torch.full([goal.size(0)], torch.nan)
+            return out, out, out, out
+        robot_position = state_dict["robot_position"]
+        last_robot_position = last_state_dict["robot_position"]
+        distance_vectors = (state_dict["points_on_l2"][:, x:x + 3] - state_dict["points_on_l1"][:, x:x + 3] for x in range(0, state_dict["points_on_l1"].size(-1), 3))
+        distance_to_goal = torch.linalg.norm(goal - robot_position)
+        motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
+        collision_penalty = torch.where(mask, 0, torch.nan)
+        for distance_vector in distance_vectors:
+            collision_penalty += (self.dc / (torch.linalg.norm(distance_vector) + EPSILON)) ** self.mc
+        collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
+        goal_reward = torch.where(distance_to_goal > self.dg, 0, self.rg)
         total_reward = motion_reward + collision_penalty + goal_reward
         return total_reward, motion_reward, collision_penalty, goal_reward
 
 
 class RLContext(ABC):
     class Accumulator:
-        state = 0
-        count = 0
+        def __init__(self, batch_size=1):
+            self.state = torch.zeros(batch_size)
+            self.count = torch.zeros(batch_size)
+            self.default_mask = torch.ones_like(self.state, dtype=torch.bool)
 
-        def update_state(self, value):
-            self.state += value
-            self.count += 1
+        def update_state(self, value, mask=None):
+            if mask is None:
+                mask = self.default_mask
+            self.state = torch.where(mask, self.state + value, self.state)
+            self.count = torch.where(mask, self.count + 1, self.count)
 
-        def get_value(self):
-            return 0 if self.count == 0 else self.state / self.count
+        def get_value(self, mask=None):
+            if mask is None:
+                mask = self.default_mask
+            value = torch.where(torch.logical_and(mask, self.count != 0), self.state / self.count, 0)
+            return torch.masked_select(value, mask).numpy()
 
-        def reset(self):
-            self.state = 0
-            self.count = 0
+        def reset(self, mask=None):
+            if mask is None:
+                mask = self.default_mask
+            self.state = torch.where(mask, 0, self.state)
+            self.count = torch.where(mask, 0, self.count)
+
+    class AccumulatorFactory:
+        def __init__(self, batch_size):
+            self.batch_size = batch_size
+
+        def __call__(self):
+            return RLContext.Accumulator(self.batch_size)
 
     def __init__(self,
                  state_dim,
                  action_dim,
                  discount_factor,
                  batch_size,
+                 robot_batch,
                  max_force,
                  reward_function,
                  state_augmenter,
@@ -130,23 +150,24 @@ class RLContext(ABC):
         self.action_dim = action_dim
         self.discount_factor = discount_factor
         self.batch_size = batch_size
+        self.robot_batch = robot_batch
         self.max_force = float(max_force)
         self.output_dir = output_directory
         self.save_file = os.path.join(self.output_dir, "save.pt")
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"), max_queue=10000, flush_secs=10)
-        self.episode_accumulators = defaultdict(RLContext.Accumulator)
+        self.episode_accumulators = defaultdict(RLContext.AccumulatorFactory(self.batch_size))
         self.reward_function = reward_function
         self.state_augmenter = state_augmenter
         self.last_state_dict = None
         self.action = None
         self.epoch = 0
-        self.episode = 0
-        self.episode_start = 0
+        self.episode = torch.zeros((robot_batch, 1))
+        self.episode_start = torch.zeros((robot_batch, 1))
+        self.total_episode_count = 0
         self.goal = None
         self.episode_timeout = int(episode_timeout * 1000 / interval_duration)
         self.stop_update = False
         self.thread_executor = futures.ThreadPoolExecutor()
-        self.rng = np.random.default_rng()
         self.exploration_angle_sigma = exploration_angle_sigma
         self.exploration_rot_axis = None
         self.exploration_angle = 0
@@ -157,6 +178,8 @@ class RLContext(ABC):
         self.exploration_decay = exploration_decay
         self.exploration_duration = int(exploration_duration * 1000 / interval_duration)
         self.exploration_index = 0
+        self.exploration_rot_axis_dist = torch.distributions.multivariate_normal.MultivariateNormal(torch.zeros(3), torch.eye(3))
+        self.exploration_bb_rep_dist = torch.distributions.uniform.Uniform(0, 1)
         self.state_batch = None
         self.velocity_batch = None
         self.action_batch = None
@@ -181,7 +204,7 @@ class RLContext(ABC):
         state_dict = self._get_state_dict()
         state_dict = {**state_dict,
                       "epoch": self.epoch,
-                      "episode": self.episode - 1,
+                      "episode": self.total_episode_count - 1,
                       "exploration_angle_sigma": self.exploration_angle_sigma,
                       "exploration_bb_rep_p": self.exploration_bb_rep_p,
                       "exploration_magnitude_sigma": self.exploration_magnitude_sigma}
@@ -193,83 +216,90 @@ class RLContext(ABC):
         if os.path.exists(self.save_file):
             state_dict = torch.load(self.save_file)
             self.epoch = state_dict["epoch"]
-            self.episode = state_dict["episode"]
+            self.episode_start = torch.full_like(self.episode_start, self.epoch)
+            self.total_episode_count = state_dict["episode"]
             self.exploration_angle_sigma = state_dict["exploration_angle_sigma"]
             self.exploration_bb_rep_p = state_dict["exploration_bb_rep_p"]
             self.exploration_magnitude_sigma = state_dict["exploration_magnitude_sigma"]
             self._load_impl(state_dict)
 
     def update(self, state_dict):
-        for key in state_dict:
-            state_dict[key] = np.array(state_dict[key])
         goal = state_dict["goal"]
-        if (goal != self.goal).any():
-            if self.goal is not None:
-                for key in self.episode_accumulators:
-                    self.summary_writer.add_scalar(key, self.episode_accumulators[key].get_value(), self.episode)
-                    self.episode_accumulators[key].reset()
-                self.summary_writer.add_scalar("steps_per_episode", self.epoch - self.episode_start, self.episode)
-                self.episode += 1
-                self.save()
+        if self.goal is None:
             self.goal = goal
-            self.episode_start = self.epoch
-            self.last_state_dict = None
-        reward = None
-        if self.last_state_dict is not None:
-            # get reward
-            reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_dict, self.last_state_dict)
-            self.summary_writer.add_scalar("reward/per_epoch/total", reward, self.epoch)
-            self.episode_accumulators["reward/per_episode/total"].update_state(reward)
-            self.summary_writer.add_scalar("reward/per_epoch/motion", motion_reward, self.epoch)
-            self.episode_accumulators["reward/per_episode/motion"].update_state(motion_reward)
-            self.summary_writer.add_scalar("reward/per_epoch/collision", collision_penalty, self.epoch)
-            self.episode_accumulators["reward/per_episode/collision"].update_state(collision_penalty)
-            self.summary_writer.add_scalar("reward/per_epoch/goal/", goal_reward, self.epoch)
-            self.episode_accumulators["reward/per_episode/goal"].update_state(goal_reward)
+        # check for finished episodes
+        finished = goal.not_equal(self.goal).any(-1, True)
+        not_finished = finished.logical_not()
+        if finished.any():
+            for key in self.episode_accumulators:
+                for i, value in enumerate(self.episode_accumulators[key].get_value(finished)):
+                    self.summary_writer.add_scalar(key, value, self.total_episode_count + i)
+                self.episode_accumulators[key].reset(finished)
+            steps_per_episode = torch.masked_select(self.epoch - self.episode_start, finished).numpy()
+            for value in steps_per_episode:
+                self.summary_writer.add_scalar("steps_per_episode", value, self.total_episode_count)
+                self.total_episode_count += 1
+            self.save()
+            self.goal = goal
+            self.episode_start = torch.where(finished, self.epoch, self.episode_start)
+        # get reward
+        reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_dict, self.last_state_dict, not_finished)
+        self.summary_writer.add_scalar("reward/per_epoch/total", torch.masked_select(reward, torch.logical_not(reward.isnan())).mean(), self.epoch)
+        self.episode_accumulators["reward/per_episode/total"].update_state(reward, not_finished)
+        self.summary_writer.add_scalar("reward/per_epoch/motion", torch.masked_select(motion_reward, torch.logical_not(motion_reward.isnan())).mean(), self.epoch)
+        self.episode_accumulators["reward/per_episode/motion"].update_state(motion_reward, not_finished)
+        self.summary_writer.add_scalar("reward/per_epoch/collision", torch.masked_select(collision_penalty, torch.logical_not(collision_penalty.isnan())).mean(), self.epoch)
+        self.episode_accumulators["reward/per_episode/collision"].update_state(collision_penalty, not_finished)
+        self.summary_writer.add_scalar("reward/per_epoch/goal/", torch.masked_select(goal_reward, torch.logical_not(goal_reward.isnan())).mean(), self.epoch)
+        self.episode_accumulators["reward/per_episode/goal"].update_state(goal_reward, not_finished)
+        # do the update
         self._update_impl(state_dict, reward)
         self.last_state_dict = state_dict
-        if np.any(np.isnan(self.action)):
+        if torch.any(torch.isnan(self.action)):
             rospy.loginfo("RL update yielded NaNs.")
             return self.action
         # check for timeout
-        if 0 < self.episode_timeout < self.epoch - self.episode_start:
-            self.action = state_dict["goal"][:3] - state_dict["robot_position"][:3]
-            self.action = self.action / np.linalg.norm(self.action) * self.max_force
-            return self.action
+        timeout = None
+        if self.episode_timeout > 0:
+            timeout = self.epoch - self.episode_start > self.episode_timeout
+            if timeout.any():
+                self.action = torch.where(timeout, state_dict["goal"] - state_dict["robot_position"], self.action)
+                self.action = torch.where(timeout, self.action / torch.linalg.norm(self.action, -1) * self.max_force, self.action)
+        explore = torch.ones_like(self.episode_start, dtype=torch.bool) if timeout is None else timeout.logical_not()
         # exploration
         if self.exploration_index == 0 or self.exploration_rot_axis is None:
-            self.exploration_rot_axis = self.rng.multivariate_normal(np.zeros(3), np.identity(3))
-            self.exploration_angle = np.deg2rad(self.rng.normal(scale=self.exploration_angle_sigma))
-            self.exploration_magnitude = self.rng.normal(scale=self.exploration_magnitude_sigma)
+            self.exploration_rot_axis = self.exploration_rot_axis_dist.sample([self.batch_size])
+            self.exploration_angle = torch.deg2rad(torch.distributions.normal.Normal(loc=0, scale=self.exploration_angle_sigma).sample([self.batch_size])).unsqueeze(-1)
+            self.exploration_magnitude = torch.distributions.normal.Normal(loc=0, scale=self.exploration_magnitude_sigma).sample([self.batch_size]).unsqueeze(-1)
             # set repulsion vector
-            self.exploration_bb_rep_dims = np.zeros(3)
-            if self.rng.uniform(0., 1.) < self.exploration_bb_rep_p:
-                bb_origin = state_dict["workspace_bb_origin"]
-                bb_end = bb_origin + state_dict["workspace_bb_dims"]
-                ee_position = state_dict["robot_position"][:3]
-                for i in range(3):
-                    if ee_position[i] - BB_REPULSION_DISTANCE < bb_origin[i]:
-                        self.exploration_bb_rep_dims[i] = self.max_force
-                    elif ee_position[i] + BB_REPULSION_DISTANCE > bb_end[i]:
-                        self.exploration_bb_rep_dims[i] = -self.max_force
+            self.exploration_bb_rep_dims = torch.empty_like(self.action)
+            bb_rep = self.exploration_bb_rep_dist.sample(finished.shape) < self.exploration_bb_rep_dims
+            bb_origin = state_dict["workspace_bb_origin"]
+            bb_end = bb_origin + state_dict["workspace_bb_dims"]
+            ee_position = state_dict["robot_position"]
+            mask = ee_position - BB_REPULSION_DISTANCE < bb_origin
+            self.exploration_bb_rep_dims = torch.where(bb_rep.logical_and(mask), self.max_force, 0)
+            mask = mask.logical_not().logical_and(ee_position + BB_REPULSION_DISTANCE > bb_end)
+            self.exploration_bb_rep_dims = torch.where(bb_rep.logical_and(mask), -self.max_force, self.exploration_bb_rep_dims)
         self.exploration_index = (self.exploration_index + 1) % self.exploration_duration
         # change dimensions for which we repulse from the bb wall
-        for i in range(3):
-            if self.exploration_bb_rep_dims[i] != 0:
-                self.action[i] = self.exploration_bb_rep_dims[i]
+        self.action = torch.where((self.exploration_bb_rep_dims != 0).logical_and(explore), self.exploration_bb_rep_dims, self.action)
         self.exploration_bb_rep_p *= self.exploration_decay
         # rotate the action vector a bit
-        self.exploration_rot_axis[2] = - (self.exploration_rot_axis[0] * self.action[0] + self.exploration_rot_axis[1] * self.action[1]) / self.action[2]  # make it perpendicular to the action vector
-        self.exploration_rot_axis /= np.linalg.norm(self.exploration_rot_axis)
-        self.exploration_rot_axis *= self.exploration_angle
+        self.exploration_rot_axis[:, 2] = - (self.exploration_rot_axis[:, 0] * self.action[:, 0] + self.exploration_rot_axis[:, 1] * self.action[:, 1]) / self.action[:, 2]  # make it perpendicular to the action vector
+        self.exploration_rot_axis /= torch.linalg.norm(self.exploration_rot_axis, -1)
         self.exploration_angle_sigma *= self.exploration_decay
-        self.action = Rotation.from_rotvec(self.exploration_rot_axis).apply(self.action)
-        if self.exploration_angle < 0:
-            self.exploration_rot_axis *= -1
+        cos_angle = torch.cos(self.exploration_angle)
+        self.action = torch.where(explore,
+                                  self.action * cos_angle +  # Rodrigues' rotation formula
+                                  torch.sin(self.exploration_angle) * torch.linalg.cross(self.action, self.exploration_rot_axis) +
+                                  self.exploration_rot_axis * torch.linalg.vecdot(self.exploration_rot_axis, self.action).unsqueeze(-1) * (1 - cos_angle),
+                                  self.action)
+        self.exploration_rot_axis = torch.where(self.exploration_angle < 0, self.exploration_rot_axis * -1, self.exploration_rot_axis)
         # change magnitude
-        magnitude = np.linalg.norm(self.action)
-        clipped_magnitude = np.clip(magnitude + self.exploration_magnitude, 0., self.max_force)
-        self.summary_writer.add_scalar("magnitude", clipped_magnitude, self.epoch)
+        magnitude = torch.linalg.norm(self.action, -1)
+        clipped_magnitude = torch.clip(magnitude + self.exploration_magnitude, 0., self.max_force)
+        self.summary_writer.add_scalar("magnitude", clipped_magnitude.mean(), self.epoch)
         self.action = self.action / magnitude * clipped_magnitude
         self.exploration_magnitude_sigma *= self.exploration_decay
         self.summary_writer.add_scalar("exploration/angle_sigma", self.exploration_angle_sigma, self.epoch)

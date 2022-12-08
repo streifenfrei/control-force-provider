@@ -66,6 +66,7 @@ def main():
     load_context(config)
     rospy.init_node("rl_training", anonymous=True)
     signal.signal(signal.SIGINT, signal_handle)
+    signal.signal(signal.SIGTERM, signal_handle)
 
     if args.service:
         rospy.Service("update_network", UpdateNetwork, service_handle)

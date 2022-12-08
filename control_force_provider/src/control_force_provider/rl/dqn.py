@@ -2,7 +2,6 @@ import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 import random
 import time
-import itertools
 from collections import deque
 from .basics import *
 
@@ -12,9 +11,12 @@ class ReplayBuffer:
         self.buffer = deque([], maxlen=capacity)
 
     def push(self, *args):
-        invalid = any(np.any(np.isnan(arg)) or np.any(np.isinf(arg)) for arg in args)
-        if not invalid:
-            self.buffer.append(Transition(*args))
+        chunks = []
+        for arg in args:
+            chunks.append(arg.cpu().split(1))
+        for chunk in zip(*chunks):
+            if not any(x.isnan().any() or not x.isfinite().any() for x in chunk):
+                self.buffer.append(Transition(*chunk))
 
     def sample(self, batch_size):
         return random.sample(self.buffer, batch_size)
@@ -98,49 +100,41 @@ class DQNContext(RLContext):
         self.dot_loss_factor = state_dict["dot_loss_factor"]
         self.replay_buffer.buffer = deque(state_dict["replay_buffer"], maxlen=self.replay_buffer.buffer.maxlen)
 
-    def _update_thread(self):
-        batch_size = min(len(self.replay_buffer), self.batch_size)
-        if batch_size >= 2:
-            while not self.stop_update:
-                data_load_start = time.time()
-                if self.state_batch is None:
-                    batch = Transition(*zip(*list(self.replay_buffer.buffer)))
-                    self.state_batch = torch.tensor(np.stack(batch.state), dtype=torch.float32).to(DEVICE)
-                    self.velocity_batch = torch.tensor(np.stack(batch.velocity), dtype=torch.float32).to(DEVICE)
-                    self.action_batch = torch.tensor(np.stack(batch.action), dtype=torch.float32).to(DEVICE)
-                    self.reward_batch = torch.tensor(np.stack(batch.reward), dtype=torch.float32).unsqueeze(-1).to(DEVICE)
-                else:
-                    if batch_size <= self.batch_size:
-                        missing = self.state_batch.shape[0] - batch_size
-                        if missing < 0:
-                            batch = Transition(*zip(*itertools.islice(self.replay_buffer.buffer, len(self.replay_buffer) + missing, len(self.replay_buffer))))
-                            self.state_batch = torch.cat([self.state_batch, torch.tensor(np.stack(batch.state), dtype=torch.float32, device=DEVICE)], 0)
-                            self.velocity_batch = torch.cat([self.velocity_batch, torch.tensor(np.stack(batch.velocity), dtype=torch.float32, device=DEVICE)], 0)
-                            self.action_batch = torch.cat([self.action_batch, torch.tensor(np.stack(batch.action), dtype=torch.float32, device=DEVICE)], 0)
-                            self.reward_batch = torch.cat([self.reward_batch, torch.tensor(np.stack(batch.reward), dtype=torch.float32, device=DEVICE).unsqueeze(-1)], 0)
-                self.batch_load_time_accumulator.update_state(time.time() - data_load_start)
-                mu, q, _ = self.dqn_policy(self.state_batch, self.action_batch)
-                with torch.no_grad():
-                    v_target = self.dqn_target(self.state_batch)[2]
-                target = self.reward_batch + self.discount_factor * v_target
-                rl_loss = nn.MSELoss()(q, target)
-                self.rl_loss_accumulator.update_state(rl_loss.detach().cpu().numpy())
-                rl_loss *= (1 - self.dot_loss_factor)
-                dot_loss = - torch.mean(
-                    torch.bmm((mu / (torch.norm(mu, dim=1).unsqueeze(1) + EPSILON)).unsqueeze(1), (self.velocity_batch / (torch.norm(self.velocity_batch, dim=1).unsqueeze(1) + EPSILON)).unsqueeze(2)).squeeze(2))
-                self.dot_loss_accumulator.update_state(dot_loss.detach().cpu().numpy())
-                dot_loss *= self.dot_loss_factor
-                loss = rl_loss + dot_loss
-                self.total_loss_accumulator.update_state(loss.detach().cpu().numpy())
-                self.optimizer.zero_grad()
-                loss.backward()
-                clip_grad_norm_(self.dqn_policy.parameters(), 1)
-                self.optimizer.step()
+    def _update_impl(self, state_dict, reward):
+        if self.last_state_dict is not None:
+            self.replay_buffer.push(self.last_state_dict["state"], state_dict["robot_velocity"], self.action, state_dict["state"], reward)
+
+        if len(self.replay_buffer) >= self.batch_size:
+            data_load_start = time.time()
+            batch = Transition(*zip(*self.replay_buffer.sample(self.batch_size)))
+            state_batch = torch.cat(batch.state).to(DEVICE)
+            velocity_batch = torch.cat(batch.velocity).to(DEVICE)
+            action_batch = torch.cat(batch.action).to(DEVICE)
+            reward_batch = torch.cat(batch.reward).to(DEVICE)
+            self.batch_load_time_accumulator.update_state(time.time() - data_load_start)
+            mu, q, _ = self.dqn_policy(state_batch, action_batch)
+            with torch.no_grad():
+                v_target = self.dqn_target(state_batch)[2]
+            target = reward_batch + self.discount_factor * v_target
+            rl_loss = nn.MSELoss()(q, target)
+            print(
+                f"nans| state: {state_batch.isnan().any()}, velocity: {velocity_batch.isnan().any()}, action: {action_batch.isnan().any()}, reward: {reward_batch.isnan().any()}, loss: {rl_loss.isnan().any()}/{rl_loss.detach().mean().cpu().numpy()}")
+            self.rl_loss_accumulator.update_state(rl_loss.detach().mean().cpu())
+            rl_loss *= (1 - self.dot_loss_factor)
+            dot_loss = - torch.mean(
+                torch.bmm((mu / (torch.norm(mu, dim=1).unsqueeze(1) + EPSILON)).unsqueeze(1), (velocity_batch / (torch.norm(velocity_batch, dim=1).unsqueeze(1) + EPSILON)).unsqueeze(2)).squeeze(2))
+            self.dot_loss_accumulator.update_state(dot_loss.mean().detach().cpu())
+            dot_loss *= self.dot_loss_factor
+            loss = rl_loss + dot_loss
+            self.total_loss_accumulator.update_state(loss.mean().detach().cpu())
+            self.optimizer.zero_grad()
+            loss.backward()
+            clip_grad_norm_(self.dqn_policy.parameters(), 1)
+            self.optimizer.step()
             self.summary_writer.add_scalar("loss/rl", self.rl_loss_accumulator.get_value(), self.epoch)
             self.summary_writer.add_scalar("loss/dot", self.dot_loss_accumulator.get_value(), self.epoch)
             self.summary_writer.add_scalar("loss/total", self.total_loss_accumulator.get_value(), self.epoch)
             self.summary_writer.add_scalar("profiling/batch_load_time", self.batch_load_time_accumulator.get_value(), self.epoch)
-            self.summary_writer.add_scalar("profiling/batch_size", batch_size, self.epoch)
             self.rl_loss_accumulator.reset()
             self.dot_loss_accumulator.reset()
             self.total_loss_accumulator.reset()
@@ -148,17 +142,9 @@ class DQNContext(RLContext):
             self.summary_writer.add_scalar("dot_loss_factor", self.dot_loss_factor, self.epoch)
             self.dot_loss_factor *= self.dot_loss_decay
 
-    def _update_impl(self, state_dict, reward):
-        if reward is not None:
-            self.replay_buffer.push(self.last_state_dict["state"], state_dict["robot_velocity"][:3], self.action, state_dict["state"], reward)
-        if self.update_future is not None:
-            self.stop_update = True
-            self.update_future.result()
         if self.epoch % self.target_network_update_rate == 0:
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
         self.dqn_policy.eval()
         with torch.no_grad():
-            self.action = self.dqn_policy(torch.tensor(state_dict["state"], dtype=torch.float32).unsqueeze(0).to(DEVICE))[0].squeeze(0).cpu().numpy()
+            self.action = self.dqn_policy(state_dict["state"])[0].squeeze(0)
         self.dqn_policy.train()
-        self.stop_update = False
-        self.update_future = self.thread_executor.submit(self._update_thread)
