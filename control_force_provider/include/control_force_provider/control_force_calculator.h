@@ -22,34 +22,80 @@ namespace control_force_provider::backend {
 class Environment {
  private:
   const inline static double workspace_bb_stopping_strength = 0.001;
-
-  void updateDistanceVectors();
+  torch::Tensor ee_position_;
+  boost::shared_mutex ee_pos_mtx;
+  torch::Tensor ee_rotation_;
+  boost::shared_mutex ee_rot_mtx;
+  torch::Tensor ee_velocity_;
+  boost::shared_mutex ee_vel_mtx;
+  torch::Tensor rcm_;
+  boost::shared_mutex rcm_mtx;
+  torch::Tensor goal_;
+  boost::shared_mutex goal_mtx;
+  torch::Tensor workspace_bb_origin_;
+  boost::shared_mutex bb_or_mtx;
+  std::vector<torch::Tensor> ob_positions_;
+  boost::shared_mutex ob_pos_mtx;
+  std::vector<torch::Tensor> ob_rotations_;
+  boost::shared_mutex ob_rot_mtx;
+  std::vector<torch::Tensor> ob_velocities_;
+  boost::shared_mutex ob_vel_mtx;
+  std::vector<torch::Tensor> ob_rcms_;
+  boost::shared_mutex ob_rcm_mtx;
+  std::vector<torch::Tensor> points_on_l1_;
+  boost::shared_mutex l1_mtx;
+  std::vector<torch::Tensor> points_on_l2_;
+  boost::shared_mutex l2_mtx;
+  torch::Tensor offset_;
+  boost::shared_mutex offset_mtx;
+  const torch::Tensor workspace_bb_dims_;
+  const torch::Scalar max_force_;
+  double start_time_;
+  torch::Scalar elapsed_time_;
+  std::vector<boost::shared_ptr<Obstacle>> obstacles_;
+  boost::shared_ptr<ObstacleLoader> obstacle_loader_;
 
  public:
   // TODO: use getter and setter
-  torch::Tensor workspace_bb_origin;
-  const torch::Tensor workspace_bb_dims;
-  const torch::Scalar max_force;
-  torch::Tensor ee_position;
-  torch::Tensor ee_rotation;
-  torch::Tensor ee_velocity;
-  torch::Tensor rcm;
-  torch::Tensor goal;
-  double start_time;
-  torch::Scalar elapsed_time;
-  std::vector<boost::shared_ptr<Obstacle>> obstacles;
-  boost::shared_ptr<ObstacleLoader> obstacle_loader;
-  std::vector<torch::Tensor> ob_positions;
-  std::vector<torch::Tensor> ob_rotations;
-  std::vector<torch::Tensor> ob_velocities;
-  std::vector<torch::Tensor> ob_rcms;
-  std::vector<torch::Tensor> points_on_l1_;
-  std::vector<torch::Tensor> points_on_l2_;
-  torch::Tensor offset;
   Environment(const YAML::Node& config, int batch_size = 1);
-  void setOffset(const torch::Tensor& offset_);
-  void update(const torch::Tensor& ee_position_);
-  void clipForce(torch::Tensor& force_);
+  const torch::Tensor& getEePosition() const;
+  boost::shared_lock_guard<boost::shared_mutex> getEePositionLock();
+  const torch::Tensor& getEeRotation() const;
+  boost::shared_lock_guard<boost::shared_mutex> getEeRotationLock();
+  const torch::Tensor& getEeVelocity() const;
+  boost::shared_lock_guard<boost::shared_mutex> getEeVelocityLock();
+  const torch::Tensor& getRCM() const;
+  boost::shared_lock_guard<boost::shared_mutex> getRCMLock();
+  void setRCM(const torch::Tensor& rcm);
+  const torch::Tensor& getGoal() const;
+  boost::shared_lock_guard<boost::shared_mutex> getGoalLock();
+  void setGoal(const torch::Tensor& goal);
+  const torch::Tensor& getWorkspaceBbOrigin() const;
+  boost::shared_lock_guard<boost::shared_mutex> getWorkspaceBbOriginLock();
+  const std::vector<torch::Tensor>& getObPositions() const;
+  boost::shared_lock_guard<boost::shared_mutex> getObPositionsLock();
+  const std::vector<torch::Tensor>& getObRotations() const;
+  boost::shared_lock_guard<boost::shared_mutex> getObRotationsLock();
+  const std::vector<torch::Tensor>& getObVelocities() const;
+  boost::shared_lock_guard<boost::shared_mutex> getObVelocitiesLock();
+  const std::vector<torch::Tensor>& getObRCMs() const;
+  const std::vector<boost::shared_ptr<Obstacle>>& getObstacles() const;
+  const boost::shared_ptr<ObstacleLoader>& getObstacleLoader() const;
+  boost::shared_lock_guard<boost::shared_mutex> getObRCMsLock();
+  const std::vector<torch::Tensor>& getPointsOnL1() const;
+  boost::shared_lock_guard<boost::shared_mutex> getPointsOnL1Lock();
+  const std::vector<torch::Tensor>& getPointsOnL2() const;
+  boost::shared_lock_guard<boost::shared_mutex> getPointsOnL2Lock();
+  const torch::Tensor& getOffset() const;
+  boost::shared_lock_guard<boost::shared_mutex> getOffsetLock();
+  void setOffset(const torch::Tensor& offset);
+  double getStartTime() const;
+  void setStartTime(double startTime);
+  const torch::Tensor& getWorkspaceBbDims() const;
+  double getMaxForce() const;
+  double getElapsedTime() const;
+  void update(const torch::Tensor& ee_position);
+  void clipForce(torch::Tensor& force);
 };
 
 class ControlForceCalculator {
@@ -68,20 +114,19 @@ class ControlForceCalculator {
  public:
   ControlForceCalculator(const YAML::Node& config);
   void getForce(torch::Tensor& force, const torch::Tensor& ee_position_);
-  [[nodiscard]] torch::Tensor getRCM() const { return env.rcm; }
+  [[nodiscard]] torch::Tensor getRCM() const { return env.getRCM(); }
   void setRCM(const torch::Tensor& rcm_) {
-    if (utils::norm(rcm_).item().toDouble() < rcm_max_norm) {
-      torch::Tensor rcm_t = rcm_;
+    if (!torch::any(utils::norm(rcm_) > rcm_max_norm).item().toBool()) {
       rcm_available_ = true;
-      env.rcm = rcm_t - env.offset;
+      env.setRCM(rcm_);
     }
   };
-  [[nodiscard]] torch::Tensor getGoal() const { return env.goal; }
+  [[nodiscard]] torch::Tensor getGoal() const { return env.getGoal(); }
 
   void setGoal(const torch::Tensor& goal_) {
     goal_available_ = true;
-    env.goal = goal_ - env.offset;
-    env.start_time = Time::now();
+    env.setGoal(goal_);
+    env.setStartTime(Time::now());
   };
   virtual ~ControlForceCalculator() = default;
 
@@ -139,8 +184,8 @@ class EpisodeContext {
  private:
   torch::Tensor start_;
   torch::Tensor goal_;
-  std::vector<boost::shared_ptr<Obstacle>>& obstacles_;
-  boost::shared_ptr<ObstacleLoader>& obstacle_loader_;
+  std::vector<boost::shared_ptr<Obstacle>> obstacles_;
+  boost::shared_ptr<ObstacleLoader> obstacle_loader_;
   const torch::Tensor start_bb_origin;
   const torch::Tensor start_bb_dims;
   const torch::Tensor goal_bb_origin;
@@ -149,7 +194,7 @@ class EpisodeContext {
   friend class Visualizer;
 
  public:
-  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>>& obstacles_, boost::shared_ptr<ObstacleLoader>& obstacle_loader, const YAML::Node& config,
+  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles_, boost::shared_ptr<ObstacleLoader> obstacle_loader, const YAML::Node& config,
                  unsigned int batch_size = 1);
   void generateEpisode(const torch::Tensor& mask);
   void generateEpisode();
