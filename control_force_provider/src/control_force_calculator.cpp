@@ -69,16 +69,34 @@ Environment::Environment(const YAML::Node& config, int batch_size)
 
 void Environment::update(const torch::Tensor& ee_position) {
   torch::Tensor ee_position_off = ee_position - offset_;
-  ee_position_ = ee_position_off;
-  ee_rotation_ = utils::zRotation(rcm_ - offset_, ee_position_);
+  {
+    boost::lock_guard<boost::shared_mutex> lock(ee_pos_mtx);
+    ee_position_ = ee_position_off;
+  }
+  {
+    boost::lock_guard<boost::shared_mutex> lock(ee_rot_mtx);
+    ee_rotation_ = utils::zRotation(rcm_ - offset_, ee_position_);
+  }
   elapsed_time_ = Time::now() - start_time_;
   for (size_t i = 0; i < obstacles_.size(); i++) {
     torch::Tensor new_ob_position = obstacles_[i]->getPosition();
     new_ob_position -= offset_;
-    ob_velocities_[i] = new_ob_position - ob_positions_[i];
-    ob_positions_[i] = new_ob_position;
-    ob_rcms_[i] = obstacles_[i]->getRCM() - offset_;
-    ob_rotations_[i] = utils::zRotation(ob_rcms_[i], ob_positions_[i]);
+    {
+      boost::lock_guard<boost::shared_mutex> lock(ob_vel_mtx);
+      ob_velocities_[i] = new_ob_position - ob_positions_[i];
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(ob_pos_mtx);
+      ob_positions_[i] = new_ob_position;
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(ob_rcm_mtx);
+      ob_rcms_[i] = obstacles_[i]->getRCM() - offset_;
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(ob_rot_mtx);
+      ob_rotations_[i] = utils::zRotation(ob_rcms_[i], ob_positions_[i]);
+    }
   }
   torch::Tensor a1 = rcm_;
   torch::Tensor b1 = ee_position_ - a1;
@@ -89,8 +107,14 @@ void Environment::update(const torch::Tensor& ee_position) {
     utils::shortestLine(a1, b1, a2, b2, t, s);
     t = torch::clamp(t, 0, 1);
     s = torch::clamp(s, 0, 1);
-    points_on_l1_[i] = a1 + t * b1;
-    points_on_l2_[i] = a2 + s * b2;
+    {
+      boost::lock_guard<boost::shared_mutex> lock(l1_mtx);
+      points_on_l1_[i] = a1 + t * b1;
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(l2_mtx);
+      points_on_l2_[i] = a2 + s * b2;
+    }
   }
 }
 
