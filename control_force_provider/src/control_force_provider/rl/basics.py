@@ -165,6 +165,7 @@ class RLContext(ABC):
         self.episode_start = torch.zeros((robot_batch, 1))
         self.total_episode_count = 0
         self.goal = None
+        self.interval_duration = interval_duration
         self.episode_timeout = int(episode_timeout * 1000 / interval_duration)
         self.stop_update = False
         self.thread_executor = futures.ThreadPoolExecutor()
@@ -230,7 +231,7 @@ class RLContext(ABC):
         # check for finished episodes
         finished = goal.not_equal(self.goal).any(-1, True)
         not_finished = finished.logical_not()
-        if finished.any():
+        if finished.any():  # TODO: speed this up
             for key in self.episode_accumulators:
                 for i, value in enumerate(self.episode_accumulators[key].get_value(finished)):
                     self.summary_writer.add_scalar(key, value, self.total_episode_count + i)
@@ -264,13 +265,15 @@ class RLContext(ABC):
             timeout = self.epoch - self.episode_start > self.episode_timeout
             if timeout.any():
                 self.action = torch.where(timeout, state_dict["goal"] - state_dict["robot_position"], self.action)
-                self.action = torch.where(timeout, self.action / torch.linalg.norm(self.action, -1) * self.max_force, self.action)
+                distance_to_goal = torch.linalg.norm(self.action)
+                scale = torch.minimum(distance_to_goal / self.interval_duration, torch.tensor(self.max_force))
+                self.action = torch.where(timeout, self.action / distance_to_goal * scale, self.action)
         explore = torch.ones_like(self.episode_start, dtype=torch.bool) if timeout is None else timeout.logical_not()
         # exploration
         if self.exploration_index == 0 or self.exploration_rot_axis is None:
-            self.exploration_rot_axis = self.exploration_rot_axis_dist.sample([self.batch_size])
-            self.exploration_angle = torch.deg2rad(torch.distributions.normal.Normal(loc=0, scale=self.exploration_angle_sigma).sample([self.batch_size])).unsqueeze(-1)
-            self.exploration_magnitude = torch.distributions.normal.Normal(loc=0, scale=self.exploration_magnitude_sigma).sample([self.batch_size]).unsqueeze(-1)
+            self.exploration_rot_axis = self.exploration_rot_axis_dist.sample([self.robot_batch])
+            self.exploration_angle = torch.deg2rad(torch.distributions.normal.Normal(loc=0, scale=self.exploration_angle_sigma).sample([self.robot_batch])).unsqueeze(-1)
+            self.exploration_magnitude = torch.distributions.normal.Normal(loc=0, scale=self.exploration_magnitude_sigma).sample([self.robot_batch]).unsqueeze(-1)
             # set repulsion vector
             self.exploration_bb_rep_dims = torch.empty_like(self.action)
             bb_rep = self.exploration_bb_rep_dist.sample(finished.shape) < self.exploration_bb_rep_dims
@@ -297,7 +300,7 @@ class RLContext(ABC):
                                   self.action)
         self.exploration_rot_axis = torch.where(self.exploration_angle < 0, self.exploration_rot_axis * -1, self.exploration_rot_axis)
         # change magnitude
-        magnitude = torch.linalg.norm(self.action, -1)
+        magnitude = torch.linalg.norm(self.action)
         clipped_magnitude = torch.clip(magnitude + self.exploration_magnitude, 0., self.max_force)
         self.summary_writer.add_scalar("magnitude", clipped_magnitude.mean(), self.epoch)
         self.action = self.action / magnitude * clipped_magnitude

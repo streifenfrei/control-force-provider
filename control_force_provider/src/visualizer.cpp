@@ -56,8 +56,6 @@ void Visualizer::callback(const ros::TimerEvent& event) {
   {
     auto lock = environment_->getRCMLock();
     robot_rcm = environment_->getRCM() + offset;
-    std::cout << offset << std::endl;
-    std::cout << robot_rcm << std::endl;
   }
   torch::Tensor goal;
   {

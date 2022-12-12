@@ -47,10 +47,12 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
 
 std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& actions) {
   torch::Tensor actions_copy = actions.clone();
-  env_->clipForce(actions_copy);
+  // env_->clipForce(actions_copy);
   ee_positions_ += actions_copy * interval_duration_;
+  ee_positions_ =
+      ee_positions_.clamp(env_->getWorkspaceBbOrigin() + env_->getOffset(), env_->getWorkspaceBbOrigin() + env_->getOffset() + env_->getWorkspaceBbDims());
   // check if episode ended
-  torch::Tensor reached_goal = utils::norm((env_->getGoal() - ee_positions_)) < goal_reached_threshold_distance_;
+  torch::Tensor reached_goal = utils::norm((env_->getGoal() + env_->getOffset() - ee_positions_)) < goal_reached_threshold_distance_;
   goal_delay_count_ = torch::where(reached_goal, goal_delay_count_ + 1, goal_delay_count_);
   torch::Tensor episode_end = goal_delay_count_ >= goal_delay;
   episode_context_->generateEpisode(episode_end);
