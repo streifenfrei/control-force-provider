@@ -7,7 +7,7 @@ using namespace control_force_provider;
 using namespace torch;
 
 namespace control_force_provider::backend {
-TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file) : ROSNode("cfp_rl_environment") {
+TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::array<double, 3> rcm) : ROSNode("cfp_rl_environment") {
   YAML::Node config = YAML::LoadFile(config_file);
   Time::setType<ManualTime>();
   time_ = boost::static_pointer_cast<ManualTime>(Time::getInstance());
@@ -20,8 +20,11 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file) : ROSNode
   interval_duration_ = utils::getConfigValue<double>(config["rl"], "interval_duration")[0];
   goal_reached_threshold_distance_ = utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0];
   ee_positions_ = episode_context_->getStart();
+  env_->setRCM(torch::from_blob(rcm.data(), {1, 3}, torch::kFloat64).clone());
+  if (utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]) env_->setOffset(env_->getRCM().clone());
   env_->update(ee_positions_);
   goal_delay_count_ = torch::zeros({batch_size_, 1}, torch::kInt);
+  if (utils::getConfigValue<bool>(config, "visualize")[0]) visualizer_ = boost::make_shared<Visualizer>(node_handle_, env_, episode_context_);
   spinner_.start();
 }
 
@@ -43,7 +46,7 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
 }
 
 std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& actions) {
-  torch::Tensor actions_copy = actions;
+  torch::Tensor actions_copy = actions.clone();
   env_->clipForce(actions_copy);
   ee_positions_ += actions_copy * interval_duration_;
   // check if episode ended
@@ -62,7 +65,7 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
 
 PYBIND11_MODULE(native, module) {
   py::class_<TorchRLEnvironment>(module, "RLEnvironment")
-      .def(py::init<std::string>())
+      .def(py::init<std::string, std::array<double, 3>>())
       .def("observe", &TorchRLEnvironment::observe, py::return_value_policy::move);
 }
 }  // namespace control_force_provider::backend

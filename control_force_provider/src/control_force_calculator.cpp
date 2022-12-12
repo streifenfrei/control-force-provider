@@ -176,7 +176,7 @@ boost::shared_lock_guard<boost::shared_mutex> Environment::getOffsetLock() { ret
 void Environment::setOffset(const torch::Tensor& offset) {
   // TODO fix it
   torch::Tensor translation = offset_ - offset;
-  workspace_bb_origin_ += offset_;
+  workspace_bb_origin_ += translation;
   rcm_ += translation;
   goal_ += translation;
   offset_ = offset;
@@ -192,14 +192,14 @@ void Environment::setStartTime(double startTime) {
 const std::vector<boost::shared_ptr<Obstacle>>& Environment::getObstacles() const { return obstacles_; }
 const boost::shared_ptr<ObstacleLoader>& Environment::getObstacleLoader() const { return obstacle_loader_; }
 
-ControlForceCalculator::ControlForceCalculator(const YAML::Node& config) : env(config) {}
+ControlForceCalculator::ControlForceCalculator(const YAML::Node& config) : env(boost::make_shared<Environment>(config)) {}
 
 void ControlForceCalculator::getForce(torch::Tensor& force, const torch::Tensor& ee_position_) {
-  if (!goal_available_) setGoal(ee_position_ - env.getOffset());
+  if (!goal_available_) setGoal(ee_position_ - env->getOffset());
   if (rcm_available_) {
-    env.update(ee_position_);
+    env->update(ee_position_);
     getForceImpl(force);
-    env.clipForce(force);
+    env->clipForce(force);
   } else {
     force = torch::zeros_like(force);
   }
@@ -217,7 +217,7 @@ PotentialFieldMethod::PotentialFieldMethod(const YAML::Node& config)
 void PotentialFieldMethod::getForceImpl(torch::Tensor& force) {
   // attractive vector
   // TODO: replace with tensors fully
-  Vector3d attractive_vector = utils::tensorToVector(env.getGoal() - env.getEePosition());
+  Vector3d attractive_vector = utils::tensorToVector(env->getGoal() - env->getEePosition());
   double ee_to_goal_distance = attractive_vector.norm();
   double smoothing_factor = 1;
   if (ee_to_goal_distance > attraction_distance_) {
@@ -228,13 +228,13 @@ void PotentialFieldMethod::getForceImpl(torch::Tensor& force) {
 
   // repulsive vector
   Vector3d repulsive_vector = Vector3d::Zero();
-  Vector3d a1 = utils::tensorToVector(env.getRCM());
-  Vector3d b1 = utils::tensorToVector(env.getEePosition()) - a1;
+  Vector3d a1 = utils::tensorToVector(env->getRCM());
+  Vector3d b1 = utils::tensorToVector(env->getEePosition()) - a1;
   double l1_length = b1.norm();
   double min_l2_to_l1_distance = repulsion_distance_;
-  for (size_t i = 0; i < env.getObPositions().size(); i++) {
-    double t = utils::tensorToVector(env.getPointsOnL1()[i] - env.getRCM()).norm() / l1_length;
-    Vector3d l2_to_l1 = utils::tensorToVector(env.getPointsOnL1()[i] - env.getPointsOnL2()[i]);
+  for (size_t i = 0; i < env->getObPositions().size(); i++) {
+    double t = utils::tensorToVector(env->getPointsOnL1()[i] - env->getRCM()).norm() / l1_length;
+    Vector3d l2_to_l1 = utils::tensorToVector(env->getPointsOnL1()[i] - env->getPointsOnL2()[i]);
     double l2_to_l1_distance = l2_to_l1.norm();
     if (l2_to_l1_distance < repulsion_distance_) {
       repulsive_vector += (repulsion_strength_ / l2_to_l1_distance - repulsion_strength_ / repulsion_distance_) / (l2_to_l1_distance * l2_to_l1_distance) *
@@ -244,17 +244,18 @@ void PotentialFieldMethod::getForceImpl(torch::Tensor& force) {
   }
   if (min_l2_to_l1_distance < repulsion_distance_) {
     // avoid positive z-translation
-    Vector3d l1_new = utils::tensorToVector(env.getEePosition()) + repulsive_vector - a1;
+    Vector3d l1_new = utils::tensorToVector(env->getEePosition()) + repulsive_vector - a1;
     double l1_new_length = l1_new.norm();
     if (l1_length - l1_new_length < 0) {
       l1_new *= l1_length / l1_new_length;
-      repulsive_vector = a1 + l1_new - utils::tensorToVector(env.getEePosition());
+      repulsive_vector = a1 + l1_new - utils::tensorToVector(env->getEePosition());
     }
     // add negative z-translation
     repulsive_vector -= (z_translation_strength_ / min_l2_to_l1_distance - z_translation_strength_ / repulsion_distance_) /
                         (min_l2_to_l1_distance * min_l2_to_l1_distance) * (b1 / l1_length);
   }
-  if ((utils::tensorToVector(env.getEePosition()) + repulsive_vector - a1).norm() < min_rcm_distance_)  // prevent pushing the end effector too close to the RCM
+  if ((utils::tensorToVector(env->getEePosition()) + repulsive_vector - a1).norm() <
+      min_rcm_distance_)  // prevent pushing the end effector too close to the RCM
     repulsive_vector = {0, 0, 0};
   force = utils::vectorToTensor(attractive_vector + repulsive_vector);
 }
@@ -364,21 +365,21 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(const YAML::Node& config,
     : ControlForceCalculator(config),
       interval_duration_(utils::getConfigValue<double>(config["rl"], "interval_duration")[0] * 10e-4),
       goal_reached_threshold_distance_(utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0]),
-      episode_context_(env.getObstacles(), env.getObstacleLoader(), config["rl"]),
+      episode_context_(boost::make_shared<EpisodeContext>(env->getObstacles(), env->getObstacleLoader(), config["rl"])),
       train(utils::getConfigValue<bool>(config["rl"], "train")[0]),
       rcm_origin_(utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]),
       output_dir(utils::getConfigValue<std::string>(config["rl"], "output_directory")[0]),
       current_force_(torch::zeros(3, utils::getTensorOptions())),
       last_calculation_(Time::now()) {
-  if (rcm_origin_) env.setOffset(env.getRCM());
-  state_provider = boost::make_shared<StateProvider>(env, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0]);
+  if (rcm_origin_) env->setOffset(env->getRCM());
+  state_provider = boost::make_shared<StateProvider>(*env, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0]);
   calculation_future_ = calculation_promise_.get_future();
   calculation_promise_.set_value(torch::zeros(3, utils::getTensorOptions()));
   if (train) {
     training_service_client = boost::make_shared<ros::ServiceClient>(node_handle.serviceClient<control_force_provider_msgs::UpdateNetwork>("update_network"));
   }
-  episode_context_.generateEpisode();
-  setGoal(episode_context_.getStart());
+  episode_context_->generateEpisode();
+  setGoal(episode_context_->getStart());
   initializing_episode = true;
 }
 
@@ -391,39 +392,39 @@ torch::Tensor ReinforcementLearningAgent::getAction() {
       for (size_t i = 0; i < state_provider->getStateDim(); i++) state_vector.push_back(state_tensor_accessor[i]);
       control_force_provider_msgs::UpdateNetwork srv;
       srv.request.state = state_vector;
-      auto accessor = env.getEePosition().accessor<double, 1>();
+      auto accessor = env->getEePosition().accessor<double, 1>();
       for (size_t i = 0; i < 3; i++) srv.request.robot_position[i] = accessor[i];
-      accessor = env.getEePosition().accessor<double, 1>();
+      accessor = env->getEePosition().accessor<double, 1>();
       for (size_t i = 0; i < 3; i++) srv.request.robot_velocity[i] = accessor[i];
-      accessor = env.getRCM().accessor<double, 1>();
+      accessor = env->getRCM().accessor<double, 1>();
       for (size_t i = 0; i < 3; i++) srv.request.robot_rcm[i] = accessor[i];
-      for (auto& ob_position : env.getObPositions()) {
+      for (auto& ob_position : env->getObPositions()) {
         accessor = ob_position.accessor<double, 1>();
         for (size_t i = 0; i < ob_position.size(0); i++) srv.request.obstacles_positions.push_back(accessor[i]);
       }
-      for (auto& ob_velocity : env.getObVelocities()) {
+      for (auto& ob_velocity : env->getObVelocities()) {
         accessor = ob_velocity.accessor<double, 1>();
         for (size_t i = 0; i < ob_velocity.size(0); i++) srv.request.obstacles_velocities.push_back(accessor[i]);
       }
-      for (auto& ob_rcm : env.getObRCMs()) {
+      for (auto& ob_rcm : env->getObRCMs()) {
         accessor = ob_rcm.accessor<double, 1>();
         for (size_t i = 0; i < ob_rcm.size(0); i++) srv.request.obstacles_rcms.push_back(accessor[i]);
       }
-      for (auto& point : env.getPointsOnL1()) {
+      for (auto& point : env->getPointsOnL1()) {
         accessor = point.accessor<double, 1>();
         for (size_t i = 0; i < point.size(0); i++) srv.request.points_on_l1.push_back(accessor[i]);
       }
-      for (auto& point : env.getPointsOnL2()) {
+      for (auto& point : env->getPointsOnL2()) {
         accessor = point.accessor<double, 1>();
         for (size_t i = 0; i < point.size(0); i++) srv.request.points_on_l2.push_back(accessor[i]);
       }
-      accessor = env.getGoal().accessor<double, 1>();
+      accessor = env->getGoal().accessor<double, 1>();
       for (size_t i = 0; i < 3; i++) srv.request.goal[i] = accessor[i];
-      auto workspace_bb_origin_acc = env.getWorkspaceBbOrigin().accessor<double, 1>();
-      auto workspace_bb_dims_acc = env.getWorkspaceBbDims().accessor<double, 1>();
+      auto workspace_bb_origin_acc = env->getWorkspaceBbOrigin().accessor<double, 1>();
+      auto workspace_bb_dims_acc = env->getWorkspaceBbDims().accessor<double, 1>();
       for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_origin[i] = workspace_bb_origin_acc[i];
       for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_dims[i] = workspace_bb_dims_acc[i];
-      srv.request.elapsed_time = env.getElapsedTime();
+      srv.request.elapsed_time = env->getElapsedTime();
       if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to call training service.");
       return utils::createTensor(std::vector<double>(std::begin(srv.response.action), std::end(srv.response.action)));
     } else
@@ -438,25 +439,25 @@ torch::Tensor ReinforcementLearningAgent::getAction() {
 void ReinforcementLearningAgent::calculationRunnable() { calculation_promise_.set_value(getAction()); }
 
 void ReinforcementLearningAgent::getForceImpl(torch::Tensor& force) {
-  if (rcm_origin_ && !env.getRCM().equal(torch::zeros(3, utils::getTensorOptions()))) {
-    env.setOffset(env.getRCM());
+  if (rcm_origin_ && !env->getRCM().equal(torch::zeros(3, utils::getTensorOptions()))) {
+    env->setOffset(env->getRCM());
     force = current_force_;
     return;
   }
   double now = Time::now();
   if (now - last_calculation_ > interval_duration_) {
     if (train) {
-      torch::Tensor goal_vector = env.getGoal() - env.getEePosition();
+      torch::Tensor goal_vector = env->getGoal() - env->getEePosition();
       if (utils::norm(goal_vector).item().toDouble() < goal_reached_threshold_distance_) {
         if (initializing_episode) {
-          episode_context_.startEpisode();
-          setGoal(episode_context_.getGoal());
+          episode_context_->startEpisode();
+          setGoal(episode_context_->getGoal());
           initializing_episode = false;
         } else {
           goal_delay_count++;
           if (goal_delay_count >= goal_delay) {
-            episode_context_.generateEpisode();
-            setGoal(episode_context_.getStart());
+            episode_context_->generateEpisode();
+            setGoal(episode_context_->getStart());
             initializing_episode = true;
             goal_delay_count = 0;
           }

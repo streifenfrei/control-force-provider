@@ -105,7 +105,7 @@ class ControlForceCalculator {
   bool goal_available_ = false;
 
  protected:
-  Environment env;
+  boost::shared_ptr<Environment> env;
   friend class Visualizer;
   friend class StateProvider;
 
@@ -114,20 +114,20 @@ class ControlForceCalculator {
  public:
   ControlForceCalculator(const YAML::Node& config);
   void getForce(torch::Tensor& force, const torch::Tensor& ee_position_);
-  [[nodiscard]] torch::Tensor getRCM() const { return env.getRCM(); }
+  [[nodiscard]] torch::Tensor getRCM() const { return env->getRCM(); }
   void setRCM(const torch::Tensor& rcm_) {
     if (!torch::any(utils::norm(rcm_) > rcm_max_norm).item().toBool()) {
       rcm_available_ = true;
-      env.setRCM(rcm_);
+      env->setRCM(rcm_);
     }
   };
-  [[nodiscard]] torch::Tensor getGoal() const { return env.getGoal(); }
-
+  [[nodiscard]] torch::Tensor getGoal() const { return env->getGoal(); }
   void setGoal(const torch::Tensor& goal_) {
     goal_available_ = true;
-    env.setGoal(goal_);
-    env.setStartTime(Time::now());
+    env->setGoal(goal_);
+    env->setStartTime(Time::now());
   };
+  const boost::shared_ptr<Environment>& getEnvironment() const { return env; };
   virtual ~ControlForceCalculator() = default;
 
   static boost::shared_ptr<ControlForceCalculator> createFromConfig(const YAML::Node& config, ros::NodeHandle& node_handle);
@@ -212,7 +212,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   const double interval_duration_;
   const double goal_reached_threshold_distance_;
   const bool rcm_origin_;
-  EpisodeContext episode_context_;
+  boost::shared_ptr<EpisodeContext> episode_context_;
   bool initializing_episode = true;
   torch::Tensor current_force_;
   double last_calculation_;
@@ -234,6 +234,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
 
  public:
   ReinforcementLearningAgent(const YAML::Node& config, ros::NodeHandle& node_handle);
+  const boost::shared_ptr<EpisodeContext>& getEpisodeContext() { return episode_context_; };
   ~ReinforcementLearningAgent() override = default;
 };
 

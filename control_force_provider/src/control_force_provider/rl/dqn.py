@@ -117,8 +117,6 @@ class DQNContext(RLContext):
                 v_target = self.dqn_target(state_batch)[2]
             target = reward_batch + self.discount_factor * v_target
             rl_loss = nn.MSELoss()(q, target)
-            print(
-                f"nans| state: {state_batch.isnan().any()}, velocity: {velocity_batch.isnan().any()}, action: {action_batch.isnan().any()}, reward: {reward_batch.isnan().any()}, loss: {rl_loss.isnan().any()}/{rl_loss.detach().mean().cpu().numpy()}")
             self.rl_loss_accumulator.update_state(rl_loss.detach().mean().cpu())
             rl_loss *= (1 - self.dot_loss_factor)
             dot_loss = - torch.mean(

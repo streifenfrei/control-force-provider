@@ -2,6 +2,8 @@
 
 #include <torch/torch.h>
 
+#include <array>
+
 #include "control_force_calculator.h"
 #include "control_force_provider.h"
 
@@ -21,9 +23,10 @@ class TorchRLEnvironment : ROSNode {
   ros::NodeHandle node_handle_{};
   ros::AsyncSpinner spinner_{1};
   std::map<std::string, torch::Tensor> getStateDict();
+  boost::shared_ptr<Visualizer> visualizer_;
 
  public:
-  TorchRLEnvironment(const std::string& config_file);
+  TorchRLEnvironment(const std::string& config_file, std::array<double, 3> rcm);
   std::map<std::string, torch::Tensor> observe(const torch::Tensor& actions);
 };
 }  // namespace control_force_provider::backend

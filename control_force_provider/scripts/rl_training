@@ -72,7 +72,7 @@ def main():
         rospy.Service("update_network", UpdateNetwork, service_handle)
         rospy.spin()
     else:
-        rl_environment = RLEnvironment(config_file)
+        rl_environment = RLEnvironment(config_file, [0.3, 0., 0.45])
         state_dict = rl_environment.observe(torch.zeros((rl_context.robot_batch, 3)))
         while not stop:
             state_dict = rl_environment.observe(rl_context.update(state_dict))
