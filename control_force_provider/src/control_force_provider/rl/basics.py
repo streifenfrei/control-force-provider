@@ -138,6 +138,7 @@ class RLContext(ABC):
                  reward_function,
                  state_augmenter,
                  output_directory,
+                 save_rate,
                  interval_duration,
                  episode_timeout,
                  exploration_angle_sigma,
@@ -153,7 +154,7 @@ class RLContext(ABC):
         self.robot_batch = robot_batch
         self.max_force = float(max_force)
         self.output_dir = output_directory
-        self.save_file = os.path.join(self.output_dir, "save.pt")
+        self.save_rate = save_rate
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"), max_queue=10000, flush_secs=10)
         self.episode_accumulators = defaultdict(RLContext.AccumulatorFactory(robot_batch))
         self.reward_function = reward_function
@@ -209,13 +210,19 @@ class RLContext(ABC):
                       "exploration_angle_sigma": self.exploration_angle_sigma,
                       "exploration_bb_rep_p": self.exploration_bb_rep_p,
                       "exploration_magnitude_sigma": self.exploration_magnitude_sigma}
-        if os.path.exists(self.save_file):
-            os.rename(self.save_file, f"{self.save_file}_old")
-        torch.save(state_dict, self.save_file)
+        torch.save(state_dict, os.path.join(self.output_dir, f"{self.epoch}.pt"))
 
     def load(self):
-        if os.path.exists(self.save_file):
-            state_dict = torch.load(self.save_file)
+        save_file = None
+        max_epoch = 0
+        for file in os.listdir(self.output_dir):
+            if os.path.isfile(file) and file.endswith(".pt"):
+                epoch = int(file[:-3])
+                if epoch >= max_epoch:
+                    save_file = file
+                    max_epoch = epoch
+        if save_file is not None:
+            state_dict = torch.load(save_file)
             self.epoch = state_dict["epoch"]
             self.episode_start = torch.full_like(self.episode_start, self.epoch)
             self.total_episode_count = state_dict["episode"]
@@ -225,13 +232,15 @@ class RLContext(ABC):
             self._load_impl(state_dict)
 
     def update(self, state_dict):
+        if self.epoch % self.save_rate == 0:
+            self.save()
         goal = state_dict["goal"]
         if self.goal is None:
             self.goal = goal
         # check for finished episodes
         finished = goal.not_equal(self.goal).any(-1, True)
         not_finished = finished.logical_not()
-        if finished.any():  # TODO: speed this up
+        if finished.any():
             for key in self.episode_accumulators:
                 for i, value in enumerate(self.episode_accumulators[key].get_value(finished)):
                     self.summary_writer.add_scalar(key, value, self.total_episode_count + i)
@@ -240,7 +249,6 @@ class RLContext(ABC):
             for value in steps_per_episode:
                 self.summary_writer.add_scalar("steps_per_episode", value, self.total_episode_count)
                 self.total_episode_count += 1
-            self.save()
             self.goal = goal
             self.episode_start = torch.where(finished, self.epoch, self.episode_start)
         # get reward
