@@ -159,6 +159,8 @@ class RLContext(ABC):
         self.output_dir = output_directory
         self.save_rate = save_rate
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"), max_queue=10000, flush_secs=10)
+        self.log_interval = 10000
+        self.log_dict = {"reward": 0}
         self.episode_accumulators = defaultdict(RLContext.AccumulatorFactory(robot_batch))
         self.reward_function = reward_function
         self.state_augmenter = state_augmenter
@@ -235,8 +237,6 @@ class RLContext(ABC):
             self._load_impl(state_dict)
 
     def update(self, state_dict):
-        if self.epoch % self.save_rate == 0:
-            self.save()
         state_dict["state"] = self.state_augmenter(state_dict["state"])
         goal = state_dict["goal"]
         if self.goal is None:
@@ -257,7 +257,9 @@ class RLContext(ABC):
             self.episode_start = torch.where(finished, self.epoch, self.episode_start)
         # get reward
         reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_dict, self.last_state_dict, not_finished)
-        self.summary_writer.add_scalar("reward/per_epoch/total", torch.masked_select(reward, torch.logical_not(reward.isnan())).mean(), self.epoch)
+        total_reward_mean = torch.masked_select(reward, torch.logical_not(reward.isnan())).mean()
+        self.log_dict["reward"] += total_reward_mean
+        self.summary_writer.add_scalar("reward/per_epoch/total", total_reward_mean, self.epoch)
         self.episode_accumulators["reward/per_episode/total"].update_state(reward, not_finished)
         self.summary_writer.add_scalar("reward/per_epoch/motion", torch.masked_select(motion_reward, torch.logical_not(motion_reward.isnan())).mean(), self.epoch)
         self.episode_accumulators["reward/per_episode/motion"].update_state(motion_reward, not_finished)
@@ -268,9 +270,10 @@ class RLContext(ABC):
         # do the update
         self._update_impl(state_dict, reward)
         self.last_state_dict = state_dict
-        if torch.any(torch.isnan(self.action)):
-            rospy.loginfo("RL update yielded NaNs.")
-            return self.action
+        nans = torch.isnan(self.action)
+        if torch.any(nans):
+            rospy.logwarn(f"NaNs in action tensor. Epoch {self.epoch}")
+            return torch.where(nans, 0, self.action)
         # check for timeout
         timeout = None
         if self.episode_timeout > 0:
@@ -319,5 +322,15 @@ class RLContext(ABC):
         self.exploration_magnitude_sigma *= self.exploration_decay
         self.summary_writer.add_scalar("exploration/angle_sigma", self.exploration_angle_sigma, self.epoch)
         self.summary_writer.add_scalar("exploration/magnitude_sigma", self.exploration_magnitude_sigma, self.epoch)
+        # log
+        if self.epoch > 0:
+            if self.epoch % self.log_interval == 0:
+                string = f"Epoch {self.epoch} | "
+                for key in self.log_dict:
+                    string += f"{key}: {self.log_dict[key] / self.log_interval}\t "
+                    self.log_dict[key] = 0
+                rospy.loginfo(string)
+            if self.epoch % self.save_rate == 0:
+                self.save()
         self.epoch += 1
         return self.action

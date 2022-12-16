@@ -85,6 +85,7 @@ class DQNContext(RLContext):
         self.update_future = None
         self.dot_loss_factor = dot_loss_factor
         self.dot_loss_decay = dot_loss_decay
+        self.log_dict["loss"] = 0
 
     def _get_state_dict(self):
         return {"model_state_dict": self.dqn_policy.state_dict(),
@@ -129,6 +130,7 @@ class DQNContext(RLContext):
             loss.backward()
             clip_grad_norm_(self.dqn_policy.parameters(), 1)
             self.optimizer.step()
+            self.log_dict["loss"] += self.total_loss_accumulator.get_value().item()
             self.summary_writer.add_scalar("loss/rl", self.rl_loss_accumulator.get_value(), self.epoch)
             self.summary_writer.add_scalar("loss/dot", self.dot_loss_accumulator.get_value(), self.epoch)
             self.summary_writer.add_scalar("loss/total", self.total_loss_accumulator.get_value(), self.epoch)
