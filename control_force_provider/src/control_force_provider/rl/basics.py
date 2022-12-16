@@ -57,13 +57,16 @@ class StateAugmenter:
             self.mapping[id] = (index, length)
             index += length
         self.num_obstacles = num_obstacles
-        self.rng = np.random.default_rng()
         self.ob_sigma = ob_sigma
         self.ob_max_noise = ob_max_noise
+        self.noise_dist = torch.distributions.multivariate_normal.MultivariateNormal(torch.zeros(3), torch.eye(3) * self.ob_sigma)
 
     def __call__(self, state):
         index, length = self.mapping[StateAugmenter._StatePartID.obstacle_position]
-        state[:, index:index + length] += np.clip(self.rng.multivariate_normal(np.zeros(length), np.identity(length) * self.ob_sigma, len(state)), -self.ob_max_noise, self.ob_max_noise)
+        stack = []
+        for i in range(0, length, 3):
+            stack.append(self.noise_dist.sample([state.size(0)]))
+        state[:, index:index + length] += torch.clip(torch.cat(stack, 1), -self.ob_max_noise, self.ob_max_noise)
         return state
 
 
@@ -234,6 +237,7 @@ class RLContext(ABC):
     def update(self, state_dict):
         if self.epoch % self.save_rate == 0:
             self.save()
+        state_dict["state"] = self.state_augmenter(state_dict["state"])
         goal = state_dict["goal"]
         if self.goal is None:
             self.goal = goal
