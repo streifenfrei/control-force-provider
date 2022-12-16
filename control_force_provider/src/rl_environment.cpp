@@ -24,7 +24,8 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
   if (utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]) env_->setOffset(env_->getRCM().clone());
   env_->update(ee_positions_);
   goal_delay_count_ = torch::zeros({batch_size_, 1}, torch::kInt);
-  if (utils::getConfigValue<bool>(config, "visualize")[0]) visualizer_ = boost::make_shared<Visualizer>(node_handle_, env_, episode_context_);
+  if (utils::getConfigValue<bool>(config, "visualize")[0])
+    visualizer_ = boost::make_shared<Visualizer>(node_handle_, env_, episode_context_, std::thread::hardware_concurrency());
   spinner_.start();
 }
 

@@ -13,6 +13,7 @@ class Visualizer {
  private:
   static constexpr double WS_SPACE = 0.1;
   static constexpr double BLOCK_SPACE = 1;
+  const unsigned int thread_count_;
   Eigen::Vector3d bb_dims;
   double block_width;
   double bb_width;
@@ -22,11 +23,14 @@ class Visualizer {
   const boost::shared_ptr<Environment> environment_;
   const boost::shared_ptr<EpisodeContext> episode_context_;
   ros::Timer timer_;
+  boost::mutex mtx_;
+
   void callback(const ros::TimerEvent& event);
   Eigen::Vector3d position(int index) const;
 
  public:
-  Visualizer(ros::NodeHandle& node_handle, boost::shared_ptr<Environment> environment, boost::shared_ptr<EpisodeContext> episode_context);
+  Visualizer(ros::NodeHandle& node_handle, boost::shared_ptr<Environment> environment, boost::shared_ptr<EpisodeContext> episode_context,
+             unsigned int thread_count = 1);
   ~Visualizer() = default;
 };
 }  // namespace control_force_provider::backend

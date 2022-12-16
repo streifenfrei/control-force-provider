@@ -25,7 +25,8 @@ ControlForceProvider::ControlForceProvider() : ROSNode("control_force_provider")
     boost::shared_ptr<EpisodeContext> episode_context;
     boost::shared_ptr<ReinforcementLearningAgent> rl_agent = boost::dynamic_pointer_cast<ReinforcementLearningAgent>(control_force_calculator_);
     if (rl_agent) episode_context = rl_agent->getEpisodeContext();
-    visualizer_ = boost::make_shared<Visualizer>(node_handle_, control_force_calculator_->getEnvironment(), episode_context);
+    visualizer_ =
+        boost::make_shared<Visualizer>(node_handle_, control_force_calculator_->getEnvironment(), episode_context, std::thread::hardware_concurrency());
   }
   rcm_subscriber_ = node_handle_.subscribe(getConfigValue<std::string>(*config_, "rcm_topic")[0], 100, &ControlForceProvider::rcmCallback, this);
   goal_subscriber_ = node_handle_.subscribe("control_force_provider/goal", 100, &ControlForceProvider::goalCallback, this);
