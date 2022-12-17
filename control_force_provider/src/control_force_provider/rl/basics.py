@@ -167,8 +167,8 @@ class RLContext(ABC):
         self.last_state_dict = None
         self.action = None
         self.epoch = 0
-        self.episode = torch.zeros((robot_batch, 1))
-        self.episode_start = torch.zeros((robot_batch, 1))
+        self.episode = torch.zeros((robot_batch, 1), device=DEVICE)
+        self.episode_start = torch.zeros((robot_batch, 1), device=DEVICE)
         self.total_episode_count = 0
         self.goal = None
         self.interval_duration = interval_duration

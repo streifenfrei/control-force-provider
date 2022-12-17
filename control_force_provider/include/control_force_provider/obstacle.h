@@ -20,28 +20,33 @@ class Obstacle {
 
  protected:
   const std::string id_;
+  torch::DeviceType device_;
   torch::Tensor rcm_;
   virtual torch::Tensor getPositionAt(torch::Tensor time) = 0;
 
  public:
-  Obstacle(const std::string& id, unsigned int batch_size = 1)
-      : start_time(torch::full({batch_size, 1}, Time::now(), utils::getTensorOptions())), id_(id), rcm_(torch::zeros(3, utils::getTensorOptions())){};
+  Obstacle(const std::string& id, unsigned int batch_size = 1, torch::DeviceType device = torch::kCPU)
+      : start_time(torch::full({batch_size, 1}, Time::now(), utils::getTensorOptions(device))),
+        id_(id),
+        rcm_(torch::zeros(3, utils::getTensorOptions(device))),
+        device_(device){};
   void reset(const torch::Tensor& mask, const torch::Tensor& offset);
   void reset(const torch::Tensor& offset);
   torch::Tensor getPosition();
   virtual ~Obstacle() = default;
 
   [[nodiscard]] const torch::Tensor& getRCM() const { return rcm_; }
-  void setRCM(torch::Tensor rcm) { rcm_ = rcm; }
-  static std::vector<boost::shared_ptr<Obstacle>> createFromConfig(const YAML::Node& config, std::string& data_path, int batch_size = 1);
+  void setRCM(torch::Tensor rcm) { rcm_ = rcm.to(device_); }
+  static std::vector<boost::shared_ptr<Obstacle>> createFromConfig(const YAML::Node& config, std::string& data_path, int batch_size = 1,
+                                                                   torch::DeviceType device = torch::kCPU);
 };
 
 class DummyObstacle : public Obstacle {
  protected:
-  torch::Tensor getPositionAt(torch::Tensor time) override { return torch::zeros({time.size(0), 3}, utils::getTensorOptions()); };
+  torch::Tensor getPositionAt(torch::Tensor time) override { return torch::zeros({time.size(0), 3}, utils::getTensorOptions(device_)); };
 
  public:
-  DummyObstacle(const std::string& id, int batch_size = 1) : Obstacle(id, batch_size){};
+  DummyObstacle(const std::string& id, int batch_size = 1, torch::DeviceType device = torch::kCPU) : Obstacle(id, batch_size){};
 };
 
 class WaypointsObstacle : public Obstacle {
@@ -58,7 +63,7 @@ class WaypointsObstacle : public Obstacle {
   torch::Tensor getPositionAt(torch::Tensor time) override;
 
  public:
-  WaypointsObstacle(const YAML::Node& config, const std::string& id, int batch_size = 1);
+  WaypointsObstacle(const YAML::Node& config, const std::string& id, int batch_size = 1, torch::DeviceType device = torch::kCPU);
   ~WaypointsObstacle() override = default;
 };
 
@@ -71,7 +76,7 @@ class FramesObstacle : public Obstacle {
   torch::Tensor getPositionAt(torch::Tensor time) override;
 
  public:
-  explicit FramesObstacle(const std::string& id, int batch_size = 1);
+  explicit FramesObstacle(const std::string& id, int batch_size = 1, torch::DeviceType device = torch::kCPU);
   void setFrames(std::map<double, Eigen::Affine3d> frames);
   ~FramesObstacle() override = default;
 };

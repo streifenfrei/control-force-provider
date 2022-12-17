@@ -12,6 +12,7 @@ class TorchRLEnvironment : ROSNode {
  private:
   const inline static int goal_delay = 10;
   double goal_reached_threshold_distance_;
+  torch::DeviceType device_;
   torch::Tensor ee_positions_;
   torch::Tensor goal_delay_count_;
   double interval_duration_;
@@ -26,7 +27,7 @@ class TorchRLEnvironment : ROSNode {
   boost::shared_ptr<Visualizer> visualizer_;
 
  public:
-  TorchRLEnvironment(const std::string& config_file, std::array<double, 3> rcm);
+  TorchRLEnvironment(const std::string& config_file, std::array<double, 3> rcm, bool force_cpu = false);
   std::map<std::string, torch::Tensor> observe(const torch::Tensor& actions);
 };
 }  // namespace control_force_provider::backend

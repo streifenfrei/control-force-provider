@@ -7,13 +7,14 @@ using namespace control_force_provider;
 using namespace torch;
 
 namespace control_force_provider::backend {
-TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::array<double, 3> rcm) : ROSNode("cfp_rl_environment") {
+TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::array<double, 3> rcm, bool force_cpu)
+    : ROSNode("cfp_rl_environment"), device_(force_cpu || !torch::hasCUDA() ? torch::kCPU : torch::kCUDA) {
   YAML::Node config = YAML::LoadFile(config_file);
   Time::setType<ManualTime>();
   time_ = boost::static_pointer_cast<ManualTime>(Time::getInstance());
   batch_size_ = utils::getConfigValue<int>(config["rl"], "robot_batch")[0];
-  env_ = boost::make_shared<Environment>(config, batch_size_);
-  episode_context_ = boost::make_shared<EpisodeContext>(env_->getObstacles(), env_->getObstacleLoader(), config["rl"], batch_size_);
+  env_ = boost::make_shared<Environment>(config, batch_size_, device_);
+  episode_context_ = boost::make_shared<EpisodeContext>(env_->getObstacles(), env_->getObstacleLoader(), config["rl"], batch_size_, device_);
   episode_context_->generateEpisode();
   episode_context_->startEpisode();
   state_provider_ = boost::make_shared<StateProvider>(*env_, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0]);
@@ -47,9 +48,8 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
 }
 
 std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& actions) {
-  torch::Tensor actions_copy = actions.clone();
   // env_->clipForce(actions_copy);
-  ee_positions_ += actions_copy * interval_duration_;
+  ee_positions_ += actions.to(device_) * interval_duration_;
   ee_positions_ =
       ee_positions_.clamp(env_->getWorkspaceBbOrigin() + env_->getOffset(), env_->getWorkspaceBbOrigin() + env_->getOffset() + env_->getWorkspaceBbDims());
   // check if episode ended
@@ -69,6 +69,7 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
 PYBIND11_MODULE(native, module) {
   py::class_<TorchRLEnvironment>(module, "RLEnvironment")
       .def(py::init<std::string, std::array<double, 3>>())
+      .def(py::init<std::string, std::array<double, 3>, bool>())
       .def("observe", &TorchRLEnvironment::observe, py::return_value_policy::move);
 }
 }  // namespace control_force_provider::backend

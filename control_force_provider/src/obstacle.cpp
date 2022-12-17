@@ -11,7 +11,8 @@ namespace fs = boost::filesystem;
 using namespace Eigen;
 using namespace control_force_provider::utils;
 namespace control_force_provider::backend {
-std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::Node& config, std::string& data_path, int batch_size) {
+std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::Node& config, std::string& data_path, int batch_size,
+                                                                    torch::DeviceType device) {
   YAML::Node obstacle_configs = getConfigValue<YAML::Node>(config, "obstacles")[0];
   // load obstacles
   std::vector<boost::shared_ptr<Obstacle>> obstacles;
@@ -23,11 +24,11 @@ std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::
       const YAML::Node& ob_config = it->second;
       std::string ob_type = getConfigValue<std::string>(ob_config, "type")[0];
       if (ob_type == "dummy") {
-        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<DummyObstacle>(id, batch_size)));
+        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<DummyObstacle>(id, batch_size, device)));
       } else if (ob_type == "waypoints") {
-        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, id, batch_size)));
+        obstacles.push_back(boost::static_pointer_cast<Obstacle>(boost::make_shared<WaypointsObstacle>(ob_config, id, batch_size, device)));
       } else if (ob_type == "csv") {
-        boost::shared_ptr<FramesObstacle> obstacle = boost::make_shared<FramesObstacle>(id, batch_size);
+        boost::shared_ptr<FramesObstacle> obstacle = boost::make_shared<FramesObstacle>(id, batch_size, device);
         if (ob_config["rcm"].IsDefined()) {
           obstacle->setRCM(utils::createTensor(utils::getConfigValue<double>(ob_config, "rcm"), 0, 3));
         };
@@ -40,21 +41,21 @@ std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::
 }
 
 void Obstacle::reset(const torch::Tensor& mask, const torch::Tensor& offset) {
-  torch::Tensor now = torch::full(1, Time::now(), utils::getTensorOptions());
-  torch::Tensor offset_ = torch::min(offset, now);
-  start_time = torch::where(mask, now - offset, start_time);
+  torch::Tensor now = torch::full(1, Time::now(), utils::getTensorOptions(device_));
+  torch::Tensor offset_ = torch::min(offset.to(device_), now);
+  start_time = torch::where(mask, now - offset_, start_time);
 }
 
-void Obstacle::reset(const torch::Tensor& offset) { this->reset(torch::ones_like(start_time), offset); }
+void Obstacle::reset(const torch::Tensor& offset) { this->reset(torch::ones_like(start_time, utils::getTensorOptions(device_)), offset); }
 
-torch::Tensor Obstacle::getPosition() { return getPositionAt((torch::full_like(start_time, Time::now(), utils::getTensorOptions()) - start_time)); }
+torch::Tensor Obstacle::getPosition() { return getPositionAt((torch::full_like(start_time, Time::now(), utils::getTensorOptions(device_)) - start_time)); }
 
-WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string& id, int batch_size)
-    : Obstacle(id, batch_size), speed_(getConfigValue<double>(config, "speed")[0]) {
+WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string& id, int batch_size, torch::DeviceType device)
+    : Obstacle(id, batch_size, device), speed_(getConfigValue<double>(config, "speed")[0]) {
   std::vector<double> waypoints_raw = getConfigValue<double>(config, "waypoints");
   unsigned int waypoints_raw_length = waypoints_raw.size() - (waypoints_raw.size() % 3);
   for (size_t i = 0; i < waypoints_raw_length; i += 3) {
-    waypoints_.push_back(utils::createTensor({waypoints_raw[i], waypoints_raw[i + 1], waypoints_raw[i + 2]}));
+    waypoints_.push_back(utils::createTensor({waypoints_raw[i], waypoints_raw[i + 1], waypoints_raw[i + 2]}, 0, -1, device_));
   }
   total_duration_ = 0;
   for (size_t i = 0; i < waypoints_.size(); i++) {
@@ -70,17 +71,17 @@ WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string
     total_duration_ += duration;
   }
   std::vector<double> rcm_raw = getConfigValue<double>(config, "rcm");
-  setRCM(utils::createTensor({rcm_raw[0], rcm_raw[1], rcm_raw[2]}));
+  setRCM(utils::createTensor({rcm_raw[0], rcm_raw[1], rcm_raw[2]}, 0, -1, device_));
 }
 
 torch::Tensor WaypointsObstacle::getPositionAt(torch::Tensor time) {
-  time = torch::fmod(time, total_duration_);
-  torch::Tensor duration_sum = torch::zeros_like(time, utils::getTensorOptions());
-  torch::Tensor found = torch::zeros_like(time, torch::kBool);
-  torch::Tensor segments_durations = torch::empty_like(time, utils::getTensorOptions());
-  torch::Tensor segments_lengths = torch::empty_like(time, utils::getTensorOptions());
-  torch::Tensor segments_normalized = torch::empty({time.size(0), 3}, utils::getTensorOptions());
-  torch::Tensor waypoints = torch::zeros({time.size(0), 3}, utils::getTensorOptions());
+  time = torch::fmod(time.to(device_), total_duration_);
+  torch::Tensor duration_sum = torch::zeros_like(time, utils::getTensorOptions(device_));
+  torch::Tensor found = torch::zeros_like(time, utils::getTensorOptions(device_, torch::kBool));
+  torch::Tensor segments_durations = torch::empty_like(time, utils::getTensorOptions(device_));
+  torch::Tensor segments_lengths = torch::empty_like(time, utils::getTensorOptions(device_));
+  torch::Tensor segments_normalized = torch::empty({time.size(0), 3}, utils::getTensorOptions(device_));
+  torch::Tensor waypoints = torch::zeros({time.size(0), 3}, utils::getTensorOptions(device_));
   for (size_t i = 0; i < segments_durations_.size(); i++) {
     duration_sum = torch::where(found, duration_sum, duration_sum + segments_durations_[i]);
     torch::Tensor mask = torch::logical_and(torch::logical_not(found), duration_sum > time);
@@ -96,7 +97,7 @@ torch::Tensor WaypointsObstacle::getPositionAt(torch::Tensor time) {
   return waypoints + segment_part;
 }
 
-FramesObstacle::FramesObstacle(const std::string& id, int batch_size) : Obstacle(id, batch_size) { iter_ = frames_.begin(); }
+FramesObstacle::FramesObstacle(const std::string& id, int batch_size, torch::DeviceType device) : Obstacle(id, batch_size, device) { iter_ = frames_.begin(); }
 
 void FramesObstacle::setFrames(std::map<double, Affine3d> frames) {
   frames_ = std::move(frames);

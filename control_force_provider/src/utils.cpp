@@ -3,9 +3,7 @@
 #include <ros/ros.h>
 
 #include <boost/regex.hpp>
-#include <fstream>
 #include <iostream>
-#include <sstream>
 
 namespace control_force_provider {
 namespace exceptions {
@@ -21,7 +19,9 @@ namespace utils {
 using namespace exceptions;
 using namespace Eigen;
 
-torch::TensorOptions getTensorOptions() { return torch::TensorOptions().dtype(torch::kFloat64).device(torch::kCPU).requires_grad(false); }
+torch::TensorOptions getTensorOptions(torch::DeviceType device, torch::ScalarType type) {
+  return torch::TensorOptions().dtype(type).device(device).requires_grad(false);
+}
 
 VectorXd tensorToVector(const torch::Tensor &tensor) {
   if (tensor.dim() > 1) {
@@ -46,14 +46,14 @@ torch::Tensor vectorToTensor(const VectorXd &vector) {
   return out.unsqueeze(0);
 }
 
-torch::Tensor createTensor(const std::vector<double> &values, unsigned int start, unsigned int end) {
+torch::Tensor createTensor(const std::vector<double> &values, unsigned int start, unsigned int end, torch::DeviceType device) {
   if (end == -1) end = values.size();
   torch::Tensor out = torch::empty(end - start, getTensorOptions());
   auto acc = out.accessor<double, 1>();
   for (size_t i = 0; i < end - start; i++) {
     acc[i] = values[start + i];
   }
-  return out.unsqueeze(0);
+  return out.unsqueeze(0).to(device);
 }
 
 torch::Tensor norm(const torch::Tensor &tensor) { return torch::linalg::vector_norm(tensor, 2, -1, true, torch::kFloat64); }

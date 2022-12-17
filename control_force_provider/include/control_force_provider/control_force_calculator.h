@@ -22,6 +22,7 @@ namespace control_force_provider::backend {
 class Environment {
  private:
   const inline static double workspace_bb_stopping_strength = 0.001;
+  const torch::DeviceType device_;
   torch::Tensor ee_position_;
   boost::shared_mutex ee_pos_mtx;
   torch::Tensor ee_rotation_;
@@ -56,8 +57,7 @@ class Environment {
   boost::shared_ptr<ObstacleLoader> obstacle_loader_;
 
  public:
-  // TODO: use getter and setter
-  Environment(const YAML::Node& config, int batch_size = 1);
+  Environment(const YAML::Node& config, int batch_size = 1, torch::DeviceType device = torch::kCPU);
   const torch::Tensor& getEePosition() const;
   boost::shared_lock_guard<boost::shared_mutex> getEePositionLock();
   const torch::Tensor& getEeRotation() const;
@@ -182,6 +182,7 @@ class StateProvider {
 
 class EpisodeContext {
  private:
+  const torch::DeviceType device_;
   torch::Tensor start_;
   torch::Tensor goal_;
   std::vector<boost::shared_ptr<Obstacle>> obstacles_;
@@ -195,7 +196,7 @@ class EpisodeContext {
 
  public:
   EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles_, boost::shared_ptr<ObstacleLoader> obstacle_loader, const YAML::Node& config,
-                 unsigned int batch_size = 1);
+                 unsigned int batch_size = 1, torch::DeviceType device = torch::kCPU);
   void generateEpisode(const torch::Tensor& mask);
   void generateEpisode();
   void startEpisode(const torch::Tensor& mask);

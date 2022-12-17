@@ -28,13 +28,13 @@ class PythonError : Error {
 namespace utils {
 using namespace exceptions;
 
-torch::TensorOptions getTensorOptions();
+torch::TensorOptions getTensorOptions(torch::DeviceType device = torch::kCPU, torch::ScalarType type = torch::kFloat64);
 
 Eigen::VectorXd tensorToVector(const torch::Tensor &tensor);
 
 torch::Tensor vectorToTensor(const Eigen::VectorXd &vector);
 
-torch::Tensor createTensor(const std::vector<double> &args, unsigned int start = 0, unsigned int end = -1);
+torch::Tensor createTensor(const std::vector<double> &args, unsigned int start = 0, unsigned int end = -1, torch::DeviceType device = torch::kCPU);
 
 torch::Tensor norm(const torch::Tensor &tensor);
 

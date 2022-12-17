@@ -73,7 +73,7 @@ def main():
         rospy.spin()
     else:
         rl_environment = RLEnvironment(config_file, [0.3, 0., 0.45])
-        state_dict = rl_environment.observe(torch.zeros((rl_context.robot_batch, 3)))
+        state_dict = rl_environment.observe(torch.zeros((rl_context.robot_batch, 3), device=rl.DEVICE))
         while not stop:
             state_dict = rl_environment.observe(rl_context.update(state_dict))
 
