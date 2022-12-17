@@ -85,13 +85,15 @@ void Visualizer::callback(const ros::TimerEvent& event) {
       const std::vector<torch::Tensor>& ob_positions = environment_->getObPositions();
       const std::vector<torch::Tensor>& ob_rcms = environment_->getObRCMs();
       for (size_t i = 0; i < ob_num; i++) {
-        for (size_t j = index; j < batch_size; j += thread_count_) {
-          Vector3d pos = position(j);
-          Vector3d obstacle_rcm = utils::tensorToVector(ob_rcms[i] + offset) + pos;
-          Vector3d obstacle_pos = utils::tensorToVector(ob_positions[i][j] + offset) + pos;
-          boost::lock_guard<boost::mutex> lock(mtx_);
-          visual_tools_.publishSphere(obstacle_rcm, rviz_visual_tools::BROWN);
-          visual_tools_.publishLine(obstacle_rcm, obstacle_pos, rviz_visual_tools::BROWN);
+        if (!boost::dynamic_pointer_cast<DummyObstacle>(environment_->getObstacles()[i])) {
+          for (size_t j = index; j < batch_size; j += thread_count_) {
+            Vector3d pos = position(j);
+            Vector3d obstacle_rcm = utils::tensorToVector(ob_rcms[i] + offset) + pos;
+            Vector3d obstacle_pos = utils::tensorToVector(ob_positions[i][j] + offset) + pos;
+            boost::lock_guard<boost::mutex> lock(mtx_);
+            visual_tools_.publishSphere(obstacle_rcm, rviz_visual_tools::BROWN);
+            visual_tools_.publishLine(obstacle_rcm, obstacle_pos, rviz_visual_tools::BROWN);
+          }
         }
       }
     }
@@ -120,13 +122,15 @@ void Visualizer::callback(const ros::TimerEvent& event) {
       const std::vector<torch::Tensor>& points_on_l1 = environment_->getPointsOnL1();
       const std::vector<torch::Tensor>& points_on_l2 = environment_->getPointsOnL2();
       for (size_t i = 0; i < ob_num; i++) {
-        for (size_t j = index; j < batch_size; j += thread_count_) {
-          Vector3d pos = position(j);
-          Vector3d point_on_l1 = utils::tensorToVector(points_on_l1[i][j] + offset) + pos;
-          Vector3d point_on_l2 = utils::tensorToVector(points_on_l2[i][j] + offset) + pos;
-          // double distance = (point_on_l2 - point_on_l1).norm();
-          boost::lock_guard<boost::mutex> lock(mtx_);
-          visual_tools_.publishLine(point_on_l1, point_on_l2, rviz_visual_tools::CYAN);
+        if (!boost::dynamic_pointer_cast<DummyObstacle>(environment_->getObstacles()[i])) {
+          for (size_t j = index; j < batch_size; j += thread_count_) {
+            Vector3d pos = position(j);
+            Vector3d point_on_l1 = utils::tensorToVector(points_on_l1[i][j] + offset) + pos;
+            Vector3d point_on_l2 = utils::tensorToVector(points_on_l2[i][j] + offset) + pos;
+            // double distance = (point_on_l2 - point_on_l1).norm();
+            boost::lock_guard<boost::mutex> lock(mtx_);
+            visual_tools_.publishLine(point_on_l1, point_on_l2, rviz_visual_tools::CYAN);
+          }
         }
       }
     }

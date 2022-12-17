@@ -37,6 +37,8 @@ class Environment {
   boost::shared_mutex bb_or_mtx;
   std::vector<torch::Tensor> ob_positions_;
   boost::shared_mutex ob_pos_mtx;
+  std::vector<torch::Tensor> ob_directions_;
+  boost::shared_mutex ob_dir_mtx;
   std::vector<torch::Tensor> ob_rotations_;
   boost::shared_mutex ob_rot_mtx;
   std::vector<torch::Tensor> ob_velocities_;
@@ -74,6 +76,8 @@ class Environment {
   boost::shared_lock_guard<boost::shared_mutex> getWorkspaceBbOriginLock();
   const std::vector<torch::Tensor>& getObPositions() const;
   boost::shared_lock_guard<boost::shared_mutex> getObPositionsLock();
+  const std::vector<torch::Tensor>& getObDirections() const;
+  boost::shared_lock_guard<boost::shared_mutex> getObDirectionsLock();
   const std::vector<torch::Tensor>& getObRotations() const;
   boost::shared_lock_guard<boost::shared_mutex> getObRotationsLock();
   const std::vector<torch::Tensor>& getObVelocities() const;

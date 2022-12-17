@@ -23,6 +23,7 @@ class StateAugmenter:
         robot_rotation = "rro"
         robot_rcm = "rpp"
         obstacle_position = "oee"
+        obstacle_direction = "odi"
         obstacle_velocity = "ove"
         obstacle_rotation = "oro"
         obstacle_rcm = "opp"
@@ -52,6 +53,7 @@ class StateAugmenter:
             length *= num_obstacles if id in [StateAugmenter._StatePartID.obstacle_position,
                                               StateAugmenter._StatePartID.obstacle_velocity,
                                               StateAugmenter._StatePartID.obstacle_rotation,
+                                              StateAugmenter._StatePartID.obstacle_direction,
                                               StateAugmenter._StatePartID.obstacle_rcm] else 1
             length *= history_length
             self.mapping[id] = (index, length)
@@ -281,8 +283,7 @@ class RLContext(ABC):
             if timeout.any():
                 self.action = torch.where(timeout, state_dict["goal"] - state_dict["robot_position"], self.action)
                 distance_to_goal = torch.linalg.norm(self.action)
-                scale = torch.minimum(distance_to_goal / self.interval_duration, torch.tensor(self.max_force))
-                self.action = torch.where(timeout, self.action / distance_to_goal * scale, self.action)
+                self.action = torch.where(timeout, self.action / distance_to_goal * torch.tensor(self.max_force), self.action)
         explore = torch.ones_like(self.episode_start, dtype=torch.bool) if timeout is None else timeout.logical_not()
         # exploration
         if self.exploration_index == 0 or self.exploration_rot_axis is None:
@@ -318,7 +319,7 @@ class RLContext(ABC):
         magnitude = torch.linalg.norm(self.action)
         clipped_magnitude = torch.clip(magnitude + self.exploration_magnitude, 0., self.max_force)
         self.summary_writer.add_scalar("magnitude", clipped_magnitude.mean(), self.epoch)
-        self.action = self.action / magnitude * clipped_magnitude
+        self.action = torch.where(explore, self.action / magnitude * clipped_magnitude, self.action)
         self.exploration_magnitude_sigma *= self.exploration_decay
         self.summary_writer.add_scalar("exploration/angle_sigma", self.exploration_angle_sigma, self.epoch)
         self.summary_writer.add_scalar("exploration/magnitude_sigma", self.exploration_magnitude_sigma, self.epoch)

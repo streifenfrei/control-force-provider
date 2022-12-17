@@ -50,6 +50,7 @@ Environment::Environment(const YAML::Node& config, int batch_size, torch::Device
   for (auto& obstacle : obstacles_) {
     ob_rcms_.push_back(obstacle->getRCM());
     ob_positions_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
+    ob_directions_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
     ob_rotations_.push_back(torch::zeros({batch_size, 4}, utils::getTensorOptions(device_)));
     ob_velocities_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
     points_on_l1_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
@@ -93,6 +94,10 @@ void Environment::update(const torch::Tensor& ee_position) {
     {
       boost::lock_guard<boost::shared_mutex> lock(ob_rcm_mtx);
       ob_rcms_[i] = obstacles_[i]->getRCM() - offset_;
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(ob_dir_mtx);
+      ob_directions_[i] = ob_rcms_[i] - ob_positions_[i];
     }
     {
       boost::lock_guard<boost::shared_mutex> lock(ob_rot_mtx);
@@ -163,6 +168,8 @@ boost::shared_lock_guard<boost::shared_mutex> Environment::getGoalLock() { retur
 const torch::Tensor& Environment::getWorkspaceBbOrigin() const { return workspace_bb_origin_; }
 boost::shared_lock_guard<boost::shared_mutex> Environment::getWorkspaceBbOriginLock() { return boost::shared_lock_guard<boost::shared_mutex>(bb_or_mtx); }
 const std::vector<torch::Tensor>& Environment::getObPositions() const { return ob_positions_; }
+boost::shared_lock_guard<boost::shared_mutex> Environment::getObDirectionsLock() { return boost::shared_lock_guard<boost::shared_mutex>(ob_dir_mtx); }
+const std::vector<torch::Tensor>& Environment::getObDirections() const { return ob_directions_; }
 boost::shared_lock_guard<boost::shared_mutex> Environment::getObPositionsLock() { return boost::shared_lock_guard<boost::shared_mutex>(ob_pos_mtx); }
 const std::vector<torch::Tensor>& Environment::getObRotations() const { return ob_rotations_; }
 boost::shared_lock_guard<boost::shared_mutex> Environment::getObRotationsLock() { return boost::shared_lock_guard<boost::shared_mutex>(ob_rot_mtx); }
@@ -282,6 +289,8 @@ StateProvider::StatePopulator StateProvider::createPopulatorFromString(const Env
     for (auto& pos : env.getObPositions()) populator.tensors_.push_back(&pos);
   } else if (id == "ove") {
     for (auto& vel : env.getObVelocities()) populator.tensors_.push_back(&vel);
+  } else if (id == "odi") {
+    for (auto& dir : env.getObDirections()) populator.tensors_.push_back(&dir);
   } else if (id == "oro") {
     populator.length_ = 4;
     for (auto& rot : env.getObRotations()) populator.tensors_.push_back(&rot);
