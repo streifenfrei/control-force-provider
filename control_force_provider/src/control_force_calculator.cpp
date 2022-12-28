@@ -344,7 +344,7 @@ void StateProvider::StatePopulator::populate(torch::Tensor& state) {
 torch::Tensor StateProvider::createState() {
   torch::Tensor state;
   for (auto& pop : state_populators_) pop.populate(state);
-  return state;
+  return torch::where(state.isnan(), 0, state);
 }
 
 EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles, boost::shared_ptr<ObstacleLoader> obstacle_loader, const YAML::Node& config,

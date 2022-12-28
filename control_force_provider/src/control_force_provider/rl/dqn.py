@@ -112,7 +112,7 @@ class DQNContext(RLContext):
             velocity_batch = torch.cat(batch.velocity).to(DEVICE)
             action_batch = torch.cat(batch.action).to(DEVICE)
             reward_batch = torch.cat(batch.reward).to(DEVICE)
-            self.batch_load_time_accumulator.update_state(time.time() - data_load_start)
+            self.batch_load_time_accumulator.update_state(torch.tensor(time.time() - data_load_start, device=DEVICE))
             mu, q, _ = self.dqn_policy(state_batch, action_batch)
             with torch.no_grad():
                 v_target = self.dqn_target(state_batch)[2]

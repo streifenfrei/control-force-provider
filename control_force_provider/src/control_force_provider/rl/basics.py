@@ -94,9 +94,10 @@ class RewardFunction:
         motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
         collision_penalty = torch.where(mask, 0, torch.nan)
         for distance_vector in distance_vectors:
+            distance_vector = torch.where(distance_vector.isnan(), 0, distance_vector)
             collision_penalty += (self.dc / (torch.linalg.norm(distance_vector) + EPSILON)) ** self.mc
         collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
-        goal_reward = torch.where(distance_to_goal > self.dg, 0, self.rg)
+        goal_reward = torch.where(distance_to_goal > self.dg, torch.zeros_like(collision_penalty), self.rg)
         total_reward = motion_reward + collision_penalty + goal_reward
         return total_reward, motion_reward, collision_penalty, goal_reward
 
@@ -253,7 +254,7 @@ class RLContext(ABC):
                 for i, value in enumerate(self.episode_accumulators[key].get_value(finished)):
                     self.summary_writer.add_scalar(key, value, self.total_episode_count + i)
                 self.episode_accumulators[key].reset(finished)
-            steps_per_episode = torch.masked_select(self.epoch - self.episode_start, finished).numpy()
+            steps_per_episode = torch.masked_select(self.epoch - self.episode_start, finished).cpu().numpy()
             for value in steps_per_episode:
                 self.summary_writer.add_scalar("steps_per_episode", value, self.total_episode_count)
                 self.total_episode_count += 1
@@ -289,12 +290,12 @@ class RLContext(ABC):
         explore = torch.ones_like(self.episode_start, dtype=torch.bool) if timeout is None else timeout.logical_not()
         # exploration
         if self.exploration_index == 0 or self.exploration_rot_axis is None:
-            self.exploration_rot_axis = self.exploration_rot_axis_dist.sample([self.robot_batch])
-            self.exploration_angle = torch.deg2rad(torch.distributions.normal.Normal(loc=0, scale=self.exploration_angle_sigma).sample([self.robot_batch])).unsqueeze(-1)
-            self.exploration_magnitude = torch.distributions.normal.Normal(loc=0, scale=self.exploration_magnitude_sigma).sample([self.robot_batch]).unsqueeze(-1)
+            self.exploration_rot_axis = self.exploration_rot_axis_dist.sample([self.robot_batch]).to(DEVICE)
+            self.exploration_angle = torch.deg2rad(torch.distributions.normal.Normal(loc=0, scale=self.exploration_angle_sigma).sample([self.robot_batch])).unsqueeze(-1).to(DEVICE)
+            self.exploration_magnitude = torch.distributions.normal.Normal(loc=0, scale=self.exploration_magnitude_sigma).sample([self.robot_batch]).unsqueeze(-1).to(DEVICE)
             # set repulsion vector
             self.exploration_bb_rep_dims = torch.empty_like(self.action)
-            bb_rep = self.exploration_bb_rep_dist.sample(finished.shape) < self.exploration_bb_rep_dims
+            bb_rep = self.exploration_bb_rep_dist.sample(finished.shape).to(DEVICE) < self.exploration_bb_rep_dims
             bb_origin = state_dict["workspace_bb_origin"]
             bb_end = bb_origin + state_dict["workspace_bb_dims"]
             ee_position = state_dict["robot_position"]
