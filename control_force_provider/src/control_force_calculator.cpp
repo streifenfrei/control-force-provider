@@ -44,7 +44,7 @@ Environment::Environment(const YAML::Node& config, int batch_size, torch::Device
       offset_(torch::zeros({1, 3}, utils::getTensorOptions(device))),
       device_(device) {
   std::string data_path;
-  obstacles_ = Obstacle::createFromConfig(config, data_path, batch_size);
+  obstacles_ = Obstacle::createFromConfig(config, data_path, batch_size, device_);
   std::vector<boost::shared_ptr<FramesObstacle>> frames_obstacles;
   int reference_obstacle = -1;
   for (auto& obstacle : obstacles_) {
@@ -371,7 +371,8 @@ void EpisodeContext::generateEpisode() { this->generateEpisode(torch::ones({star
 
 void EpisodeContext::startEpisode(const torch::Tensor& mask) {
   torch::Tensor offset = begin_max_offset_ * torch::rand({start_.size(0), 1}, utils::getTensorOptions(device_));
-  for (auto& obstacle : obstacles_) obstacle->reset(mask.to(device_), offset);
+  torch::Tensor mask_ = mask.to(device_);
+  for (auto& obstacle : obstacles_) obstacle->reset(mask_, offset);
 }
 
 void EpisodeContext::startEpisode() { this->startEpisode(torch::ones({start_.size(0), 1}, utils::getTensorOptions(device_, torch::kBool))); }

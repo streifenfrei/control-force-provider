@@ -46,7 +46,7 @@ class DummyObstacle : public Obstacle {
   torch::Tensor getPositionAt(torch::Tensor time) override { return torch::zeros({time.size(0), 3}, utils::getTensorOptions(device_)); };
 
  public:
-  DummyObstacle(const std::string& id, int batch_size = 1, torch::DeviceType device = torch::kCPU) : Obstacle(id, batch_size){};
+  DummyObstacle(const std::string& id, int batch_size = 1, torch::DeviceType device = torch::kCPU) : Obstacle(id, batch_size, device){};
 };
 
 class WaypointsObstacle : public Obstacle {

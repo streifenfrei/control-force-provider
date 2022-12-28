@@ -24,26 +24,26 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
   env_->setRCM(torch::from_blob(rcm.data(), {1, 3}, torch::kFloat64).clone());
   if (utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]) env_->setOffset(env_->getRCM().clone());
   env_->update(ee_positions_);
-  goal_delay_count_ = torch::zeros({batch_size_, 1}, torch::kInt);
-  if (utils::getConfigValue<bool>(config, "visualize")[0])
-    visualizer_ = boost::make_shared<Visualizer>(node_handle_, env_, episode_context_, std::thread::hardware_concurrency());
+  goal_delay_count_ = torch::zeros({batch_size_, 1}, utils::getTensorOptions(device_, torch::kInt32));
+  if (utils::getConfigValue<bool>(config, "visualize")[0]){
+    visualizer_ = boost::make_shared<Visualizer>(node_handle_, env_, episode_context_, std::thread::hardware_concurrency());}
   spinner_.start();
 }
 
 std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
   std::map<std::string, torch::Tensor> out;
-  out["state"] = state_provider_->createState().to(torch::kFloat32);
-  out["robot_position"] = env_->getEePosition().to(torch::kFloat32, false, true);
-  out["robot_velocity"] = env_->getEeVelocity().to(torch::kFloat32, false, true);
-  out["robot_rcm"] = env_->getRCM().to(torch::kFloat32, false, true);
-  out["obstacles_positions"] = torch::cat(TensorList(&env_->getObPositions()[0], env_->getObPositions().size()), -1).to(torch::kFloat32);
-  out["obstacles_velocities"] = torch::cat(TensorList(&env_->getObVelocities()[0], env_->getObVelocities().size()), -1).to(torch::kFloat32);
-  out["obstacles_rcms"] = torch::cat(TensorList(&env_->getObRCMs()[0], env_->getObRCMs().size()), -1).to(torch::kFloat32);
-  out["points_on_l1"] = torch::cat(TensorList(&env_->getPointsOnL1()[0], env_->getPointsOnL1().size()), -1).to(torch::kFloat32);
-  out["points_on_l2"] = torch::cat(TensorList(&env_->getPointsOnL2()[0], env_->getPointsOnL2().size()), -1).to(torch::kFloat32);
-  out["goal"] = env_->getGoal().to(torch::kFloat32, false, true);
-  out["workspace_bb_origin"] = env_->getWorkspaceBbOrigin().to(torch::kFloat32, false, true);
-  out["workspace_bb_dims"] = env_->getWorkspaceBbDims().to(torch::kFloat32, false, true);
+  out["state"] = state_provider_->createState().to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["robot_position"] = env_->getEePosition().to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["robot_velocity"] = env_->getEeVelocity().to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["robot_rcm"] = env_->getRCM().to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["obstacles_positions"] = torch::cat(TensorList(&env_->getObPositions()[0], env_->getObPositions().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["obstacles_velocities"] = torch::cat(TensorList(&env_->getObVelocities()[0], env_->getObVelocities().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["obstacles_rcms"] = torch::cat(TensorList(&env_->getObRCMs()[0], env_->getObRCMs().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["points_on_l1"] = torch::cat(TensorList(&env_->getPointsOnL1()[0], env_->getPointsOnL1().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["points_on_l2"] = torch::cat(TensorList(&env_->getPointsOnL2()[0], env_->getPointsOnL2().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["goal"] = env_->getGoal().to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["workspace_bb_origin"] = env_->getWorkspaceBbOrigin().to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["workspace_bb_dims"] = env_->getWorkspaceBbDims().to(utils::getTensorOptions(device_, torch::kFloat32));
   return out;
 }
 

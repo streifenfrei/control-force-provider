@@ -67,19 +67,19 @@ class StateAugmenter:
         index, length = self.mapping[StateAugmenter._StatePartID.obstacle_position]
         stack = []
         for i in range(0, length, 3):
-            stack.append(self.noise_dist.sample([state.size(0)]))
+            stack.append(self.noise_dist.sample([state.size(0)]).to(state.device))
         state[:, index:index + length] += torch.clip(torch.cat(stack, 1), -self.ob_max_noise, self.ob_max_noise)
         return state
 
 
 class RewardFunction:
     def __init__(self, fmax, interval_duration, dc, mc, max_penalty, dg, rg):
-        self.fmax = torch.tensor(float(fmax))
-        self.dc = torch.tensor(float(dc))
-        self.mc = torch.tensor(float(mc))
-        self.max_penalty = torch.tensor(float(max_penalty))
-        self.dg = torch.tensor(float(dg))
-        self.rg = torch.tensor(float(rg))
+        self.fmax = torch.tensor(float(fmax), device=DEVICE)
+        self.dc = torch.tensor(float(dc), device=DEVICE)
+        self.mc = torch.tensor(float(mc), device=DEVICE)
+        self.max_penalty = torch.tensor(float(max_penalty), device=DEVICE)
+        self.dg = torch.tensor(float(dg), device=DEVICE)
+        self.rg = torch.tensor(float(rg), device=DEVICE)
         self.interval_duration = float(interval_duration)
 
     def __call__(self, state_dict, last_state_dict, mask):
@@ -104,13 +104,15 @@ class RewardFunction:
 class RLContext(ABC):
     class Accumulator:
         def __init__(self, batch_size=1):
-            self.state = torch.zeros(batch_size)
-            self.count = torch.zeros(batch_size)
-            self.default_mask = torch.ones_like(self.state, dtype=torch.bool)
+            self.state = torch.zeros(batch_size, device=DEVICE)
+            self.count = torch.zeros(batch_size, device=DEVICE)
+            self.default_mask = torch.ones_like(self.state, device=DEVICE, dtype=torch.bool)
 
         def update_state(self, value, mask=None):
             if mask is None:
                 mask = self.default_mask
+            mask = mask.to(DEVICE)
+            value = value.to(DEVICE)
             self.state = torch.where(mask, self.state + value, self.state)
             self.count = torch.where(mask, self.count + 1, self.count)
 
@@ -118,7 +120,7 @@ class RLContext(ABC):
             if mask is None:
                 mask = self.default_mask
             value = torch.where(torch.logical_and(mask, self.count != 0), self.state / self.count, 0)
-            return torch.masked_select(value, mask).numpy()
+            return torch.masked_select(value, mask).cpu().numpy()
 
         def reset(self, mask=None):
             if mask is None:
@@ -259,7 +261,7 @@ class RLContext(ABC):
             self.episode_start = torch.where(finished, self.epoch, self.episode_start)
         # get reward
         reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_dict, self.last_state_dict, not_finished)
-        total_reward_mean = torch.masked_select(reward, torch.logical_not(reward.isnan())).mean()
+        total_reward_mean = torch.masked_select(reward, torch.logical_not(reward.isnan())).mean().cpu()
         self.log_dict["reward"] += total_reward_mean
         self.summary_writer.add_scalar("reward/per_epoch/total", total_reward_mean, self.epoch)
         self.episode_accumulators["reward/per_episode/total"].update_state(reward, not_finished)
@@ -274,7 +276,7 @@ class RLContext(ABC):
         self.last_state_dict = state_dict
         nans = torch.isnan(self.action)
         if torch.any(nans):
-            rospy.logwarn(f"NaNs in action tensor. Epoch {self.epoch}")
+            #rospy.logwarn(f"NaNs in action tensor. Epoch {self.epoch}")
             return torch.where(nans, 0, self.action)
         # check for timeout
         timeout = None

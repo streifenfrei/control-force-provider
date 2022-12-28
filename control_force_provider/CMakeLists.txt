@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 project(control_force_provider)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -58,7 +58,7 @@ target_include_directories(
 
 # PYTHON CORE BINDING
 pybind11_add_module(native src/rl_environment.cpp)
-target_link_libraries(native PUBLIC ${PROJECT_NAME} torch_python)
+target_link_libraries(native PUBLIC ${PROJECT_NAME} ${TORCH_PYTHON_LIBRARY})
 set_target_properties(native PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION})
 
 # EXECUTABLES

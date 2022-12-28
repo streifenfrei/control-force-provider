@@ -24,15 +24,16 @@ torch::TensorOptions getTensorOptions(torch::DeviceType device, torch::ScalarTyp
 }
 
 VectorXd tensorToVector(const torch::Tensor &tensor) {
-  if (tensor.dim() > 1) {
-    auto acc = tensor.accessor<double, 2>();
-    VectorXd out(tensor.size(1));
-    for (size_t i = 0; i < tensor.size(1); i++) out[i] = acc[0][i];
+  torch::Tensor tensor_ = tensor.cpu();
+  if (tensor_.dim() > 1) {
+    auto acc = tensor_.accessor<double, 2>();
+    VectorXd out(tensor_.size(1));
+    for (size_t i = 0; i < tensor_.size(1); i++) out[i] = acc[0][i];
     return out;
   } else {
-    auto acc = tensor.accessor<double, 1>();
-    VectorXd out(tensor.size(0));
-    for (size_t i = 0; i < tensor.size(0); i++) out[i] = acc[i];
+    auto acc = tensor_.accessor<double, 1>();
+    VectorXd out(tensor_.size(0));
+    for (size_t i = 0; i < tensor_.size(0); i++) out[i] = acc[i];
     return out;
   }
 }
@@ -117,7 +118,7 @@ void shortestLine(const torch::Tensor &a1, const torch::Tensor &b1, const torch:
 torch::Tensor zRotation(const torch::Tensor &p1, const torch::Tensor &p2) {
   torch::Tensor vec = p2 - p1;
   normalize(vec);
-  torch::Tensor z = createTensor({0, 0, 1});
+  torch::Tensor z = createTensor({0, 0, 1}, 0, -1, vec.device().type());
   torch::Tensor d = utils::dot(vec, z);
   torch::Tensor w = torch::cross(vec, z, -1);
   torch::Tensor out = torch::cat({d + torch::sqrt(d * d + utils::dot(w, w)), w}, -1);
