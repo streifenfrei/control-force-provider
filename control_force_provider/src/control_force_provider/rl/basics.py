@@ -80,6 +80,7 @@ class RewardFunction:
         self.max_penalty = torch.tensor(float(max_penalty), device=DEVICE)
         self.dg = torch.tensor(float(dg), device=DEVICE)
         self.rg = torch.tensor(float(rg), device=DEVICE)
+        print(self.rg)
         self.interval_duration = float(interval_duration)
 
     def __call__(self, state_dict, last_state_dict, mask):
@@ -90,12 +91,11 @@ class RewardFunction:
         robot_position = state_dict["robot_position"]
         last_robot_position = last_state_dict["robot_position"]
         distance_vectors = (state_dict["points_on_l2"][:, x:x + 3] - state_dict["points_on_l1"][:, x:x + 3] for x in range(0, state_dict["points_on_l1"].size(-1), 3))
-        distance_to_goal = torch.linalg.norm(goal - robot_position)
+        distance_to_goal = torch.linalg.norm(goal - robot_position, dim=-1).unsqueeze(-1)
         motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
         collision_penalty = torch.where(mask, 0, torch.nan)
         for distance_vector in distance_vectors:
-            distance_vector = torch.where(distance_vector.isnan(), 0, distance_vector)
-            collision_penalty += (self.dc / (torch.linalg.norm(distance_vector) + EPSILON)) ** self.mc
+            collision_penalty = torch.where(distance_vector.isnan()[:, 0].unsqueeze(-1), 0, collision_penalty + (self.dc / (torch.linalg.norm(distance_vector) + EPSILON)) ** self.mc)
         collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
         goal_reward = torch.where(distance_to_goal > self.dg, torch.zeros_like(collision_penalty), self.rg)
         total_reward = motion_reward + collision_penalty + goal_reward
