@@ -10,7 +10,7 @@
 namespace control_force_provider::backend {
 class TorchRLEnvironment : ROSNode {
  private:
-  const inline static int goal_delay = 10;
+  int goal_delay = 10;
   double goal_reached_threshold_distance_;
   torch::DeviceType device_;
   torch::Tensor ee_positions_;

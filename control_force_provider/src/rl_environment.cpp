@@ -20,6 +20,7 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
   state_provider_ = boost::make_shared<StateProvider>(*env_, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0]);
   interval_duration_ = utils::getConfigValue<double>(config["rl"], "interval_duration")[0];
   goal_reached_threshold_distance_ = utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0];
+  goal_delay = utils::getConfigValue<double>(config["rl"], "goal_delay")[0];
   ee_positions_ = episode_context_->getStart();
   env_->setRCM(torch::from_blob(rcm.data(), {1, 3}, torch::kFloat64).clone());
   if (utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]) env_->setOffset(env_->getRCM().clone());
