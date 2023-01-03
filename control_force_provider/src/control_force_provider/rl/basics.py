@@ -73,14 +73,14 @@ class StateAugmenter:
 
 
 class RewardFunction:
-    def __init__(self, fmax, interval_duration, dc, mc, max_penalty, dg, rg):
+    def __init__(self, fmax, interval_duration, dc, mc, motion_penalty, max_penalty, dg, rg):
         self.fmax = torch.tensor(float(fmax), device=DEVICE)
         self.dc = torch.tensor(float(dc), device=DEVICE)
         self.mc = torch.tensor(float(mc), device=DEVICE)
+        self.motion_penalty = motion_penalty
         self.max_penalty = torch.tensor(float(max_penalty), device=DEVICE)
         self.dg = torch.tensor(float(dg), device=DEVICE)
         self.rg = torch.tensor(float(rg), device=DEVICE)
-        print(self.rg)
         self.interval_duration = float(interval_duration)
 
     def __call__(self, state_dict, last_state_dict, mask):
@@ -89,11 +89,12 @@ class RewardFunction:
             out = torch.full([goal.size(0)], torch.nan)
             return out, out, out, out
         robot_position = state_dict["robot_position"]
-        last_robot_position = last_state_dict["robot_position"]
+        # last_robot_position = last_state_dict["robot_position"]
         distance_vectors = (state_dict["points_on_l2"][:, x:x + 3] - state_dict["points_on_l1"][:, x:x + 3] for x in range(0, state_dict["points_on_l1"].size(-1), 3))
         distance_to_goal = torch.linalg.norm(goal - robot_position, dim=-1).unsqueeze(-1)
-        motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
+        #motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
         collision_penalty = torch.where(mask, 0, torch.nan)
+        motion_reward = torch.full_like(collision_penalty, self.motion_penalty)
         for distance_vector in distance_vectors:
             collision_penalty = torch.where(distance_vector.isnan()[:, 0].unsqueeze(-1), 0, collision_penalty + (self.dc / (torch.linalg.norm(distance_vector) + EPSILON)) ** self.mc)
         collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
@@ -216,7 +217,7 @@ class RLContext(ABC):
         state_dict = self._get_state_dict()
         state_dict = {**state_dict,
                       "epoch": self.epoch,
-                      "episode": self.total_episode_count - 1,
+                      "episode": self.total_episode_count - self.robot_batch,
                       "exploration_angle_sigma": self.exploration_angle_sigma,
                       "exploration_bb_rep_p": self.exploration_bb_rep_p,
                       "exploration_magnitude_sigma": self.exploration_magnitude_sigma}
