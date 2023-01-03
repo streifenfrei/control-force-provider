@@ -265,7 +265,8 @@ class RLContext(ABC):
         # get reward
         reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_dict, self.last_state_dict, not_finished)
         total_reward_mean = torch.masked_select(reward, torch.logical_not(reward.isnan())).mean().cpu()
-        self.log_dict["reward"] += total_reward_mean
+        if not torch.isnan(total_reward_mean):
+            self.log_dict["reward"] += total_reward_mean
         self.summary_writer.add_scalar("reward/per_epoch/total", total_reward_mean, self.epoch)
         self.episode_accumulators["reward/per_episode/total"].update_state(reward, not_finished)
         self.summary_writer.add_scalar("reward/per_epoch/motion", torch.masked_select(motion_reward, torch.logical_not(motion_reward.isnan())).mean(), self.epoch)
