@@ -227,10 +227,11 @@ class RLContext(ABC):
         save_file = None
         max_epoch = 0
         for file in os.listdir(self.output_dir):
-            if os.path.isfile(file) and file.endswith(".pt"):
+            full_path = os.path.join(self.output_dir, file)
+            if os.path.isfile(full_path) and file.endswith(".pt"):
                 epoch = int(file[:-3])
                 if epoch >= max_epoch:
-                    save_file = file
+                    save_file = full_path
                     max_epoch = epoch
         if save_file is not None:
             state_dict = torch.load(save_file)
