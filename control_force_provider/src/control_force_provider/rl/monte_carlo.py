@@ -24,7 +24,7 @@ class MonteCarloContext(RLContext):
         self.dqn.load_state_dict(state_dict["model_state_dict"])
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
 
-    def _update_impl(self, state_dict, reward):
+    def _update_impl(self, state_dict, reward, is_terminal):
         # TODO: use tensors batches
         if reward is not None:
             self.total_reward += reward

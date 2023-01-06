@@ -210,7 +210,7 @@ class RLContext(ABC):
         return
 
     @abstractmethod
-    def _update_impl(self, state_dict, reward):
+    def _update_impl(self, state_dict, reward, is_terminal):
         return
 
     def save(self):
@@ -276,7 +276,7 @@ class RLContext(ABC):
         self.summary_writer.add_scalar("reward/per_epoch/goal/", torch.masked_select(goal_reward, torch.logical_not(goal_reward.isnan())).mean(), self.epoch)
         self.episode_accumulators["reward/per_episode/goal"].update_state(goal_reward, not_finished)
         # do the update
-        self._update_impl(state_dict, reward)
+        self._update_impl(state_dict, reward, goal_reward > 0)
         self.last_state_dict = state_dict
         nans = torch.isnan(self.action)
         if torch.any(nans):
