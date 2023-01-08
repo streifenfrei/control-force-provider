@@ -284,7 +284,7 @@ class RLContext(ABC):
         self.last_state_dict = state_dict
         nans = torch.isnan(self.action)
         if torch.any(nans):
-            #rospy.logwarn(f"NaNs in action tensor. Epoch {self.epoch}")
+            # rospy.logwarn(f"NaNs in action tensor. Epoch {self.epoch}")
             return torch.where(nans, 0, self.action)
         # check for timeout
         timeout = None
@@ -299,8 +299,10 @@ class RLContext(ABC):
         # exploration
         if self.exploration_index == 0 or self.exploration_rot_axis is None:
             self.exploration_rot_axis = self.exploration_rot_axis_dist.sample([self.robot_batch]).to(DEVICE)
-            self.exploration_angle = torch.deg2rad(torch.distributions.normal.Normal(loc=0, scale=self.exploration_angle_sigma).sample([self.robot_batch])).unsqueeze(-1).to(DEVICE)
-            self.exploration_magnitude = torch.distributions.normal.Normal(loc=0, scale=self.exploration_magnitude_sigma).sample([self.robot_batch]).unsqueeze(-1).to(DEVICE)
+            self.exploration_angle = torch.deg2rad(torch.distributions.normal.Normal(loc=0, scale=self.exploration_angle_sigma).sample([self.robot_batch])).unsqueeze(-1).to(
+                DEVICE) if self.exploration_angle_sigma > EPSILON else torch.zeros([self.robot_batch, 1])
+            self.exploration_magnitude = torch.distributions.normal.Normal(loc=0, scale=self.exploration_magnitude_sigma).sample([self.robot_batch]).unsqueeze(-1).to(
+                DEVICE) if self.exploration_magnitude_sigma > EPSILON else torch.zeros([self.robot_batch, 1])
             # set repulsion vector
             self.exploration_bb_rep_dims = torch.empty_like(self.action)
             bb_rep = self.uniform_dist.sample(finished.shape).to(DEVICE) < self.exploration_bb_rep_dims
