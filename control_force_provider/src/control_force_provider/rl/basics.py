@@ -153,6 +153,7 @@ class RLContext(ABC):
                  exploration_angle_sigma,
                  exploration_bb_rep_p,
                  exploration_magnitude_sigma,
+                 exploration_goal_p,
                  exploration_decay,
                  exploration_duration,
                  **kwargs):
@@ -188,11 +189,12 @@ class RLContext(ABC):
         self.exploration_bb_rep_dims = np.zeros(3)
         self.exploration_magnitude_sigma = exploration_magnitude_sigma
         self.exploration_magnitude = 0
+        self.exploration_goal_p = exploration_goal_p
         self.exploration_decay = exploration_decay
         self.exploration_duration = int(exploration_duration * 1000 / interval_duration)
         self.exploration_index = 0
         self.exploration_rot_axis_dist = torch.distributions.multivariate_normal.MultivariateNormal(torch.zeros(3), torch.eye(3))
-        self.exploration_bb_rep_dist = torch.distributions.uniform.Uniform(0, 1)
+        self.uniform_dist = torch.distributions.uniform.Uniform(0, 1)
         self.state_batch = None
         self.velocity_batch = None
         self.action_batch = None
@@ -220,7 +222,8 @@ class RLContext(ABC):
                       "episode": self.total_episode_count - self.robot_batch,
                       "exploration_angle_sigma": self.exploration_angle_sigma,
                       "exploration_bb_rep_p": self.exploration_bb_rep_p,
-                      "exploration_magnitude_sigma": self.exploration_magnitude_sigma}
+                      "exploration_magnitude_sigma": self.exploration_magnitude_sigma,
+                      "exploration_goal_p": self.exploration_goal_p}
         torch.save(state_dict, os.path.join(self.output_dir, f"{self.epoch}.pt"))
 
     def load(self):
@@ -241,6 +244,7 @@ class RLContext(ABC):
             self.exploration_angle_sigma = state_dict["exploration_angle_sigma"]
             self.exploration_bb_rep_p = state_dict["exploration_bb_rep_p"]
             self.exploration_magnitude_sigma = state_dict["exploration_magnitude_sigma"]
+            self.exploration_goal_p = state_dict["exploration_goal_p"]
             self._load_impl(state_dict)
 
     def update(self, state_dict):
@@ -284,12 +288,13 @@ class RLContext(ABC):
             return torch.where(nans, 0, self.action)
         # check for timeout
         timeout = None
+        goal_direction = state_dict["goal"] - state_dict["robot_position"]
+        distance_to_goal = torch.linalg.norm(goal_direction)
+        goal_direction = goal_direction / distance_to_goal * torch.tensor(self.max_force)
         if self.episode_timeout > 0:
             timeout = self.epoch - self.episode_start > self.episode_timeout
             if timeout.any():
-                self.action = torch.where(timeout, state_dict["goal"] - state_dict["robot_position"], self.action)
-                distance_to_goal = torch.linalg.norm(self.action)
-                self.action = torch.where(timeout, self.action / distance_to_goal * torch.tensor(self.max_force), self.action)
+                self.action = torch.where(timeout, goal_direction, self.action)
         explore = torch.ones_like(self.episode_start, dtype=torch.bool) if timeout is None else timeout.logical_not()
         # exploration
         if self.exploration_index == 0 or self.exploration_rot_axis is None:
@@ -298,7 +303,7 @@ class RLContext(ABC):
             self.exploration_magnitude = torch.distributions.normal.Normal(loc=0, scale=self.exploration_magnitude_sigma).sample([self.robot_batch]).unsqueeze(-1).to(DEVICE)
             # set repulsion vector
             self.exploration_bb_rep_dims = torch.empty_like(self.action)
-            bb_rep = self.exploration_bb_rep_dist.sample(finished.shape).to(DEVICE) < self.exploration_bb_rep_dims
+            bb_rep = self.uniform_dist.sample(finished.shape).to(DEVICE) < self.exploration_bb_rep_dims
             bb_origin = state_dict["workspace_bb_origin"]
             bb_end = bb_origin + state_dict["workspace_bb_dims"]
             ee_position = state_dict["robot_position"]
@@ -307,6 +312,11 @@ class RLContext(ABC):
             mask = mask.logical_not().logical_and(ee_position + BB_REPULSION_DISTANCE > bb_end)
             self.exploration_bb_rep_dims = torch.where(bb_rep.logical_and(mask), -self.max_force, self.exploration_bb_rep_dims)
         self.exploration_index = (self.exploration_index + 1) % self.exploration_duration
+        # choose action towards goal with some p
+        move_to_goal = self.uniform_dist.sample(finished.shape).to(DEVICE) < self.exploration_goal_p
+        self.exploration_goal_p *= self.exploration_decay
+        self.action = torch.where(move_to_goal, goal_direction, self.action)
+        explore = explore.logical_and(move_to_goal.logical_not())
         # change dimensions for which we repulse from the bb wall
         self.action = torch.where((self.exploration_bb_rep_dims != 0).logical_and(explore), self.exploration_bb_rep_dims, self.action)
         self.exploration_bb_rep_p *= self.exploration_decay
@@ -329,6 +339,7 @@ class RLContext(ABC):
         self.exploration_magnitude_sigma *= self.exploration_decay
         self.summary_writer.add_scalar("exploration/angle_sigma", self.exploration_angle_sigma, self.epoch)
         self.summary_writer.add_scalar("exploration/magnitude_sigma", self.exploration_magnitude_sigma, self.epoch)
+        self.summary_writer.add_scalar("exploration/goal_p", self.exploration_goal_p, self.epoch)
         # log
         if self.epoch > 0:
             if self.epoch % self.log_interval == 0:
