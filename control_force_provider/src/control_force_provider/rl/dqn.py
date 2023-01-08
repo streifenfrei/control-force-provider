@@ -26,9 +26,9 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-class DQN(nn.Module):
+class DQNNAF(nn.Module):
     def __init__(self, state_dim, action_dim, layer_size, max_force):
-        super(DQN, self).__init__()
+        super(DQNNAF, self).__init__()
         self.action_dim = action_dim
         self.max_force = float(max_force)
         self.dense1 = nn.Linear(state_dim, layer_size)
@@ -67,11 +67,25 @@ class DQN(nn.Module):
         return mu, q, v
 
 
-class DQNContext(RLContext):
-    def __init__(self, layer_size, replay_buffer_size, target_network_update_rate, dot_loss_factor, dot_loss_decay, **kwargs):
-        super().__init__(**kwargs)
-        self.dqn_policy = DQN(self.state_dim, self.action_dim, layer_size, self.max_force).to(DEVICE)
-        self.dqn_target = DQN(self.state_dim, self.action_dim, layer_size, self.max_force).to(DEVICE)
+class DQNNAFContext(RLContext):
+    def __init__(self,
+                 layer_size,
+                 replay_buffer_size,
+                 target_network_update_rate,
+                 dot_loss_factor,
+                 dot_loss_decay,
+                 exploration_angle_sigma,
+                 exploration_bb_rep_p,
+                 exploration_magnitude_sigma,
+                 exploration_goal_p,
+                 exploration_decay,
+                 exploration_duration,
+                 **kwargs):
+        super().__init__(
+            exploration_scheme=ContinuesExploration(kwargs["interval_duration"], kwargs["max_force"], exploration_angle_sigma, exploration_bb_rep_p, exploration_magnitude_sigma, exploration_goal_p, exploration_decay,
+                                                    exploration_duration), **kwargs)
+        self.dqn_policy = DQNNAF(self.state_dim, self.action_dim, layer_size, self.max_force).to(DEVICE)
+        self.dqn_target = DQNNAF(self.state_dim, self.action_dim, layer_size, self.max_force).to(DEVICE)
         self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
         self.dqn_target.eval()
         self.optimizer = torch.optim.Adam(self.dqn_policy.parameters())

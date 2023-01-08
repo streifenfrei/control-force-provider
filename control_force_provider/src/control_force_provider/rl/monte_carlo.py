@@ -1,13 +1,13 @@
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 from .basics import *
-from .dqn import DQN
+from .dqn import DQNNAF
 
 
 class MonteCarloContext(RLContext):
     def __init__(self, layer_size, **kwargs):
         super().__init__(**kwargs)
-        self.dqn = DQN(self.state_dim, self.action_dim, layer_size, self.max_force).to(device)
+        self.dqn = DQNNAF(self.state_dim, self.action_dim, layer_size, self.max_force).to(device)
         self.optimizer = torch.optim.Adam(self.dqn.parameters())
         self.total_reward = 0
         self.episode_buffer = []
