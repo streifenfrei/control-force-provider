@@ -49,6 +49,7 @@ def load_context(config):
     config["state_augmenter"] = state_augmenter
     rl_context = rl.context_mapping[config["type"]](**config,
                                                     **config[{"dqn": "dqn", "dqn_naf": "dqn", "mc": "mc"}[config["type"]]],
+                                                    **config["discretization"],
                                                     **config["exploration"])
     rl_context.load()
 
