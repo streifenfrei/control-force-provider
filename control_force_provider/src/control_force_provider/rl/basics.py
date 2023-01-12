@@ -108,19 +108,21 @@ class ActionSpace:
         assert grid_order > 0
         assert magnitude_order > 0
         angle_step = math.pi / 2 / grid_order
-        angle_step_num = 4 * grid_order
+        theta_step_num = 2 * grid_order
+        phi_step_num = 4 * grid_order
         self.magnitude_step = max_force / magnitude_order
         self.static_space = [torch.zeros([1, 3])]
-        for i in range(angle_step_num):
+        for i in range(theta_step_num + 1):
             theta = i * angle_step
-            for j in range(angle_step_num):
+            for j in range(phi_step_num):
                 phi = j * angle_step
                 action_vector = torch.tensor([math.sin(theta) * math.cos(phi),
                                               math.sin(theta) * math.sin(phi),
                                               math.cos(theta)]).unsqueeze(0)
+                action_vector = torch.where(action_vector.abs() < EPSILON, 0, action_vector)
                 for k in range(1, magnitude_order + 1):
                     self.static_space.append(action_vector * k * self.magnitude_step)
-                if i == 0 or i == angle_step_num / 2:
+                if i == 0 or i == theta_step_num:
                     break
         self.dynamic_space = []
         for i in range(1, magnitude_order + 1):
