@@ -267,7 +267,6 @@ class RLContext(ABC):
             self._load_impl(state_dict)
 
     def update(self, state_dict):
-        state_dict["state"] = self.state_augmenter(state_dict["state"])
         goal = state_dict["goal"]
         if self.goal is None:
             self.goal = goal
@@ -317,10 +316,11 @@ class RLContext(ABC):
 
 
 class DiscreteRLContext(RLContext):
-    def __init__(self, grid_order, magnitude_order, exploration_epsilon, exploration_decay, **kwargs):
+    def __init__(self, grid_order, magnitude_order, exploration_epsilon, exploration_goal_p, exploration_decay, **kwargs):
         super().__init__(**kwargs)
         self.action_space = ActionSpace(grid_order, magnitude_order, self.max_force)
         self.exploration_epsilon = exploration_epsilon
+        self.exploration_goal_p = exploration_goal_p
         self.exploration_decay = exploration_decay
         self.action_index = None
 
@@ -350,11 +350,15 @@ class DiscreteRLContext(RLContext):
         if self.episode_timeout > 0:
             timeout = self.epoch - self.episode_start > self.episode_timeout
             if timeout.any():
-                self.action_index = torch.where(timeout, 0, self.action_index)
+                self.action_index = torch.where(timeout, len(self.action_space.dynamic_space) - 1, self.action_index)
         # explore
         explore = torch.ones_like(self.episode_start, dtype=torch.bool) if timeout is None else timeout.logical_not()
         explore = explore.logical_and(torch.rand_like(explore, dtype=torch.float32) < self.exploration_epsilon)
-        exploration = torch.randint_like(self.episode_start, 0, len(self.action_space), dtype=torch.int64)
+        explore_goal = torch.rand_like(explore, dtype=torch.float32) < self.exploration_goal_p
+        exploration = torch.randint_like(self.action_index, len(self.action_space.dynamic_space), len(self.action_space) - 1)
+        exploration_goal = torch.randint_like(self.action_index, 0, len(self.action_space.dynamic_space))
+        exploration = torch.where(explore.logical_and(explore_goal), exploration_goal, exploration)
+        exploration = torch.where(exploration == self.action_index, len(self.action_space) - 1, exploration)
         self.summary_writer.add_scalar("exploration/epsilon", self.exploration_epsilon, self.epoch)
         self.exploration_epsilon *= self.exploration_decay
         self.action_index = torch.where(explore, exploration, self.action_index)
