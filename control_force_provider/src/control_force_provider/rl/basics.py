@@ -73,11 +73,12 @@ class StateAugmenter:
 
 
 class RewardFunction:
-    def __init__(self, fmax, interval_duration, dc, mc, motion_penalty, max_penalty, dg, rg):
+    def __init__(self, fmax, interval_duration, dc, mc, motion_penalty, timeout_penalty, max_penalty, dg, rg):
         self.fmax = torch.tensor(float(fmax), device=DEVICE)
         self.dc = torch.tensor(float(dc), device=DEVICE)
         self.mc = torch.tensor(float(mc), device=DEVICE)
         self.motion_penalty = motion_penalty
+        self.timeout_penalty = timeout_penalty
         self.max_penalty = torch.tensor(float(max_penalty), device=DEVICE)
         self.dg = torch.tensor(float(dg), device=DEVICE)
         self.rg = torch.tensor(float(rg), device=DEVICE)
@@ -90,15 +91,16 @@ class RewardFunction:
             return out, out, out, out
         robot_position = state_dict["robot_position"]
         # last_robot_position = last_state_dict["robot_position"]
-        distance_vectors = (state_dict["points_on_l2"][:, x:x + 3] - state_dict["points_on_l1"][:, x:x + 3] for x in range(0, state_dict["points_on_l1"].size(-1), 3))
+        collision_distances = (state_dict["collision_distances"][:, x:x + 1] for x in range(state_dict["collision_distances"].size(-1)))
         distance_to_goal = torch.linalg.norm(goal - robot_position, dim=-1).unsqueeze(-1)
         # motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
         collision_penalty = torch.where(mask, 0, torch.nan)
-        motion_reward = torch.full_like(collision_penalty, self.motion_penalty)
-        for distance_vector in distance_vectors:
-            collision_penalty = torch.where(distance_vector.isnan()[:, 0].unsqueeze(-1), 0, collision_penalty + (self.dc / (torch.linalg.norm(distance_vector) + EPSILON)) ** self.mc)
+        motion_reward = torch.where(mask, torch.full_like(collision_penalty, self.motion_penalty), torch.nan)
+        for collision_distance in collision_distances:
+            collision_penalty = torch.where(collision_distance.isnan(), 0, collision_penalty + (self.dc / (collision_distance + EPSILON)) ** self.mc)
         collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
-        goal_reward = torch.where(distance_to_goal > self.dg, torch.zeros_like(collision_penalty), self.rg)
+        goal_reward = torch.where(mask, torch.where(distance_to_goal > self.dg, torch.zeros_like(collision_penalty), self.rg), torch.nan)
+        goal_reward = torch.where(state_dict["is_timeout"], self.timeout_penalty, goal_reward)
         total_reward = motion_reward + collision_penalty + goal_reward
         return total_reward, motion_reward, collision_penalty, goal_reward
 
@@ -191,7 +193,6 @@ class RLContext(ABC):
                  output_directory,
                  save_rate,
                  interval_duration,
-                 episode_timeout,
                  **kwargs):
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -215,7 +216,6 @@ class RLContext(ABC):
         self.total_episode_count = 0
         self.goal = None
         self.interval_duration = interval_duration
-        self.episode_timeout = int(episode_timeout * 1000 / interval_duration)
         self.stop_update = False
         self.state_batch = None
         self.velocity_batch = None
@@ -234,7 +234,7 @@ class RLContext(ABC):
         return
 
     @abstractmethod
-    def _update_impl(self, state_dict, reward, is_terminal):
+    def _update_impl(self, state_dict, reward):
         return
 
     @abstractmethod
@@ -298,7 +298,7 @@ class RLContext(ABC):
         self.summary_writer.add_scalar("reward/per_epoch/goal/", torch.masked_select(goal_reward, torch.logical_not(goal_reward.isnan())).mean(), self.epoch)
         self.episode_accumulators["reward/per_episode/goal"].update_state(goal_reward, not_finished)
         # do the update
-        self._update_impl(state_dict, reward, goal_reward > 0)
+        self._update_impl(state_dict, reward)
         self.last_state_dict = state_dict
         self._post_update(state_dict)
         # log
@@ -333,7 +333,7 @@ class DiscreteRLContext(RLContext):
         return
 
     @abstractmethod
-    def _update_impl(self, state_dict, reward, is_terminal):
+    def _update_impl(self, state_dict, reward):
         return
 
     def _get_state_dict(self):
@@ -345,14 +345,8 @@ class DiscreteRLContext(RLContext):
         self._load_impl_(state_dict)
 
     def _post_update(self, state_dict):
-        # check for timeout
-        timeout = None
-        if self.episode_timeout > 0:
-            timeout = self.epoch - self.episode_start > self.episode_timeout
-            if timeout.any():
-                self.action_index = torch.where(timeout, len(self.action_space.dynamic_space) - 1, self.action_index)
         # explore
-        explore = torch.ones_like(self.episode_start, dtype=torch.bool) if timeout is None else timeout.logical_not()
+        explore = state_dict["is_timeout"].logical_not()
         explore = explore.logical_and(torch.rand_like(explore, dtype=torch.float32) < self.exploration_epsilon)
         explore_goal = torch.rand_like(explore, dtype=torch.float32) < self.exploration_goal_p
         exploration = torch.randint_like(self.action_index, len(self.action_space.dynamic_space), len(self.action_space) - 1)
@@ -400,7 +394,7 @@ class ContinuesRLContext(RLContext):
         return
 
     @abstractmethod
-    def _update_impl(self, state_dict, reward, is_terminal):
+    def _update_impl(self, state_dict, reward):
         return
 
     def _get_state_dict(self):
@@ -422,17 +416,8 @@ class ContinuesRLContext(RLContext):
         if torch.any(nans):
             # rospy.logwarn(f"NaNs in action tensor. Epoch {self.epoch}")
             self.action = torch.where(nans, 0, self.action)
-        # check for timeout
-        timeout = None
-        goal_direction = state_dict["goal"] - state_dict["robot_position"]
-        distance_to_goal = torch.linalg.norm(goal_direction)
-        goal_direction = goal_direction / distance_to_goal * torch.tensor(self.max_force)
-        if self.episode_timeout > 0:
-            timeout = self.epoch - self.episode_start > self.episode_timeout
-            if timeout.any():
-                self.action = torch.where(timeout, goal_direction, self.action)
         # explore
-        explore = torch.ones_like(self.episode_start, dtype=torch.bool) if timeout is None else timeout.logical_not()
+        explore = state_dict["is_timeout"].logical_not()
         if self.exploration_index == 0 or self.exploration_rot_axis is None:
             self.exploration_rot_axis = self.exploration_rot_axis_dist.sample([self.robot_batch]).to(DEVICE)
             self.exploration_angle = torch.deg2rad(torch.distributions.normal.Normal(loc=0, scale=self.exploration_angle_sigma).sample([self.robot_batch])).unsqueeze(-1).to(

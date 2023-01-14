@@ -49,6 +49,8 @@ class Environment {
   boost::shared_mutex l1_mtx;
   std::vector<torch::Tensor> points_on_l2_;
   boost::shared_mutex l2_mtx;
+  std::vector<torch::Tensor> collision_distances_;
+  boost::shared_mutex cd_mtx;
   torch::Tensor offset_;
   boost::shared_mutex offset_mtx;
   const torch::Tensor workspace_bb_dims_;
@@ -90,6 +92,8 @@ class Environment {
   boost::shared_lock_guard<boost::shared_mutex> getPointsOnL1Lock();
   const std::vector<torch::Tensor>& getPointsOnL2() const;
   boost::shared_lock_guard<boost::shared_mutex> getPointsOnL2Lock();
+  const std::vector<torch::Tensor>& getCollisionDistances() const;
+  boost::shared_lock_guard<boost::shared_mutex> getCollisionDistancesLock();
   const torch::Tensor& getOffset() const;
   boost::shared_lock_guard<boost::shared_mutex> getOffsetLock();
   void setOffset(const torch::Tensor& offset);

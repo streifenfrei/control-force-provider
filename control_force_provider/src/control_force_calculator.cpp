@@ -55,6 +55,7 @@ Environment::Environment(const YAML::Node& config, int batch_size, torch::Device
     ob_velocities_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
     points_on_l1_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
     points_on_l2_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
+    collision_distances_.push_back(torch::zeros({batch_size, 1}, utils::getTensorOptions(device_)));
     boost::shared_ptr<FramesObstacle> frames_obstacle = boost::dynamic_pointer_cast<FramesObstacle>(obstacle);
     if (frames_obstacle) {
       if (frames_obstacle->getRCM().equal(torch::zeros(3, utils::getTensorOptions(device_)))) {
@@ -117,9 +118,10 @@ void Environment::update(const torch::Tensor& ee_position) {
       boost::lock_guard<boost::shared_mutex> lock(l1_mtx);
       points_on_l1_[i] = a1 + t * b1;
     }
+    { points_on_l2_[i] = a2 + s * b2; }
     {
-      boost::lock_guard<boost::shared_mutex> lock(l2_mtx);
-      points_on_l2_[i] = a2 + s * b2;
+      boost::lock_guard<boost::shared_mutex> lock(cd_mtx);
+      collision_distances_[i] = utils::norm((points_on_l1_[i] - points_on_l2_[i]));
     }
   }
 }
@@ -181,6 +183,8 @@ const std::vector<torch::Tensor>& Environment::getPointsOnL1() const { return po
 boost::shared_lock_guard<boost::shared_mutex> Environment::getPointsOnL1Lock() { return boost::shared_lock_guard<boost::shared_mutex>(l1_mtx); }
 const std::vector<torch::Tensor>& Environment::getPointsOnL2() const { return points_on_l2_; }
 boost::shared_lock_guard<boost::shared_mutex> Environment::getPointsOnL2Lock() { return boost::shared_lock_guard<boost::shared_mutex>(goal_mtx); }
+const std::vector<torch::Tensor>& Environment::getCollisionDistances() const { return collision_distances_; }
+boost::shared_lock_guard<boost::shared_mutex> Environment::getCollisionDistancesLock() { return boost::shared_lock_guard<boost::shared_mutex>(cd_mtx); }
 const torch::Tensor& Environment::getOffset() const { return offset_; }
 boost::shared_lock_guard<boost::shared_mutex> Environment::getOffsetLock() { return boost::shared_lock_guard<boost::shared_mutex>(offset_mtx); }
 void Environment::setOffset(const torch::Tensor& offset) {

@@ -19,15 +19,18 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
   episode_context_->startEpisode();
   state_provider_ = boost::make_shared<StateProvider>(*env_, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0]);
   interval_duration_ = utils::getConfigValue<double>(config["rl"], "interval_duration")[0];
+  collision_threshold_distance_ = utils::getConfigValue<double>(config["rl"], "collision_threshold_distance")[0];
+  timeout_ = int(utils::getConfigValue<double>(config["rl"], "episode_timeout")[0] * 1000 / interval_duration_);
+  epoch_count_ = torch::zeros({batch_size_, 1}, utils::getTensorOptions(device_, torch::kInt32));
   goal_reached_threshold_distance_ = utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0];
-  goal_delay = utils::getConfigValue<double>(config["rl"], "goal_delay")[0];
   ee_positions_ = episode_context_->getStart();
+  is_terminal_ = torch::zeros({batch_size_, 1}, utils::getTensorOptions(device_, torch::kBool));
   env_->setRCM(torch::from_blob(rcm.data(), {1, 3}, torch::kFloat64).clone());
   if (utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]) env_->setOffset(env_->getRCM().clone());
   env_->update(ee_positions_);
-  goal_delay_count_ = torch::zeros({batch_size_, 1}, utils::getTensorOptions(device_, torch::kInt32));
-  if (utils::getConfigValue<bool>(config, "visualize")[0]){
-    visualizer_ = boost::make_shared<Visualizer>(node_handle_, env_, episode_context_, std::thread::hardware_concurrency());}
+  if (utils::getConfigValue<bool>(config, "visualize")[0]) {
+    visualizer_ = boost::make_shared<Visualizer>(node_handle_, env_, episode_context_, std::thread::hardware_concurrency());
+  }
   spinner_.start();
 }
 
@@ -37,12 +40,20 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
   out["robot_position"] = env_->getEePosition().to(utils::getTensorOptions(device_, torch::kFloat32));
   out["robot_velocity"] = env_->getEeVelocity().to(utils::getTensorOptions(device_, torch::kFloat32));
   out["robot_rcm"] = env_->getRCM().to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["obstacles_positions"] = torch::cat(TensorList(&env_->getObPositions()[0], env_->getObPositions().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["obstacles_velocities"] = torch::cat(TensorList(&env_->getObVelocities()[0], env_->getObVelocities().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["obstacles_positions"] =
+      torch::cat(TensorList(&env_->getObPositions()[0], env_->getObPositions().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["obstacles_velocities"] =
+      torch::cat(TensorList(&env_->getObVelocities()[0], env_->getObVelocities().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
   out["obstacles_rcms"] = torch::cat(TensorList(&env_->getObRCMs()[0], env_->getObRCMs().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["points_on_l1"] = torch::cat(TensorList(&env_->getPointsOnL1()[0], env_->getPointsOnL1().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["points_on_l2"] = torch::cat(TensorList(&env_->getPointsOnL2()[0], env_->getPointsOnL2().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["points_on_l1"] =
+      torch::cat(TensorList(&env_->getPointsOnL1()[0], env_->getPointsOnL1().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["points_on_l2"] =
+      torch::cat(TensorList(&env_->getPointsOnL2()[0], env_->getPointsOnL2().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["collision_distances"] =
+      torch::cat(TensorList(&env_->getCollisionDistances()[0], env_->getCollisionDistances().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
   out["goal"] = env_->getGoal().to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["is_terminal"] = is_terminal_.clone();
+  out["is_timeout"] = is_timeout_.clone();
   out["workspace_bb_origin"] = env_->getWorkspaceBbOrigin().to(utils::getTensorOptions(device_, torch::kFloat32));
   out["workspace_bb_dims"] = env_->getWorkspaceBbDims().to(utils::getTensorOptions(device_, torch::kFloat32));
   return out;
@@ -53,14 +64,21 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
   ee_positions_ += actions.to(device_) * interval_duration_;
   ee_positions_ =
       ee_positions_.clamp(env_->getWorkspaceBbOrigin() + env_->getOffset(), env_->getWorkspaceBbOrigin() + env_->getOffset() + env_->getWorkspaceBbDims());
-  // check if episode ended
+  // check if episode ended by reaching goal ...
   torch::Tensor reached_goal = utils::norm((env_->getGoal() + env_->getOffset() - ee_positions_)) < goal_reached_threshold_distance_;
-  goal_delay_count_ = torch::where(reached_goal, goal_delay_count_ + 1, goal_delay_count_);
-  torch::Tensor episode_end = goal_delay_count_ >= goal_delay;
-  episode_context_->generateEpisode(episode_end);
-  episode_context_->startEpisode(episode_end);
-  goal_delay_count_ = torch::where(episode_end, 0, goal_delay_count_);
-  ee_positions_ = torch::where(episode_end, episode_context_->getStart(), ee_positions_);
+  // ... or by collision
+  torch::Tensor collided = torch::zeros_like(reached_goal);
+  for (auto& distance_to_obs : env_->getCollisionDistances()) {
+    torch::Tensor not_nan = distance_to_obs.isnan().logical_not();
+    collided = collided.logical_or(not_nan.logical_and(distance_to_obs < collision_threshold_distance_));
+  }
+  // ... or by timeout
+  is_timeout_ = epoch_count_ >= timeout_;
+  episode_context_->generateEpisode(is_terminal_);
+  episode_context_->startEpisode(is_terminal_);
+  ee_positions_ = torch::where(is_terminal_, episode_context_->getStart(), ee_positions_);
+  is_terminal_ = reached_goal.logical_or(collided.logical_or(is_timeout_));
+  epoch_count_ = torch::where(is_terminal_, 0, epoch_count_ + 1);
   env_->setGoal(episode_context_->getGoal());
   env_->update(ee_positions_);
   *time_ += interval_duration_ * 1e-3;

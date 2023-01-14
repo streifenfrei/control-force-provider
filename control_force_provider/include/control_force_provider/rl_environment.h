@@ -10,11 +10,14 @@
 namespace control_force_provider::backend {
 class TorchRLEnvironment : ROSNode {
  private:
-  int goal_delay = 10;
   double goal_reached_threshold_distance_;
+  double collision_threshold_distance_;
+  int timeout_;
   torch::DeviceType device_;
   torch::Tensor ee_positions_;
-  torch::Tensor goal_delay_count_;
+  torch::Tensor epoch_count_;
+  torch::Tensor is_terminal_;
+  torch::Tensor is_timeout_;
   double interval_duration_;
   unsigned int batch_size_;
   boost::shared_ptr<ManualTime> time_;

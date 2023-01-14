@@ -75,6 +75,7 @@ WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string
 }
 
 torch::Tensor WaypointsObstacle::getPositionAt(torch::Tensor time) {
+  if (waypoints_.size() == 1) return torch::expand_copy(waypoints_[0], {time.size(0), 3});
   time = torch::fmod(time.to(device_), total_duration_);
   torch::Tensor duration_sum = torch::zeros_like(time, utils::getTensorOptions(device_));
   torch::Tensor found = torch::zeros_like(time, utils::getTensorOptions(device_, torch::kBool));

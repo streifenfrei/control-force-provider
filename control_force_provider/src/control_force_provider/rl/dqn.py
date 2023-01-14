@@ -79,9 +79,9 @@ class DQNContext(DiscreteRLContext):
         self.optimizer = torch.optim.Adam(self.dqn_policy.parameters())
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
 
-    def _update_impl(self, state_dict, reward, is_terminal):
+    def _update_impl(self, state_dict, reward):
         if self.last_state_dict is not None:
-            next_state = torch.where(is_terminal.expand(-1, state_dict["state"].size(-1)), torch.nan, state_dict["state"])
+            next_state = torch.where(state_dict["is_terminal"].expand(-1, state_dict["state"].size(-1)), torch.nan, state_dict["state"])
             self.replay_buffer.push(self.last_state_dict["state"], state_dict["robot_velocity"], self.action_index, next_state, reward)
 
         if len(self.replay_buffer) >= self.batch_size:
@@ -206,9 +206,9 @@ class DQNNAFContext(ContinuesRLContext):
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
         self.dot_loss_factor = state_dict["dot_loss_factor"]
 
-    def _update_impl(self, state_dict, reward, is_terminal):
+    def _update_impl(self, state_dict, reward):
         if self.last_state_dict is not None:
-            next_state = torch.where(is_terminal.expand(-1, state_dict["state"].size(-1)), torch.nan, state_dict["state"])
+            next_state = torch.where(state_dict["is_terminal"].expand(-1, state_dict["state"].size(-1)), torch.nan, state_dict["state"])
             self.replay_buffer.push(self.last_state_dict["state"], state_dict["robot_velocity"], self.action, next_state, reward)
 
         if len(self.replay_buffer) >= self.batch_size:

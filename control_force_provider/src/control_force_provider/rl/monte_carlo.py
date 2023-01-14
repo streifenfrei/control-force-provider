@@ -33,7 +33,7 @@ class MonteCarloContext(DiscreteRLContext):
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
         self.soft_is = state_dict["soft_is"]
 
-    def _update_impl(self, state_dict, reward, is_terminal):
+    def _update_impl(self, state_dict, reward):
         # populate episode_buffer and update_buffer
         if self.last_state_dict is not None:
             last_states = torch.split(self.last_state_dict["state"], 1)
@@ -48,8 +48,9 @@ class MonteCarloContext(DiscreteRLContext):
                 if self.soft_is < EPSILON and was_exploring[i]:
                     self.episode_buffer[i].clear()
                     continue
-                self.episode_buffer[i].append(MonteCarloUpdateTuple(last_states[i], actions[i], rewards[i], weights[i]))
-                if is_terminal[i]:
+                if not rewards[i].isnan():
+                    self.episode_buffer[i].append(MonteCarloUpdateTuple(last_states[i], actions[i], rewards[i], weights[i]))
+                elif state_dict["is_terminal"][i]:
                     self.episode_buffer[i].reverse()
                     self.update_buffer.append(self.episode_buffer[i])
                     episode_length = len(self.episode_buffer[i])
