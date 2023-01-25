@@ -22,8 +22,10 @@ class Visualizer {
   ros::NodeHandle& node_handle_;
   const boost::shared_ptr<Environment> environment_;
   const boost::shared_ptr<EpisodeContext> episode_context_;
+  std::map<std::string, torch::Tensor> custom_marker_;
   ros::Timer timer_;
-  boost::mutex mtx_;
+  boost::mutex visualizer_mtx_;
+  boost::shared_mutex custom_marker_mtx_;
 
   void callback(const ros::TimerEvent& event);
   Eigen::Vector3d position(int index) const;
@@ -31,6 +33,7 @@ class Visualizer {
  public:
   Visualizer(ros::NodeHandle& node_handle, boost::shared_ptr<Environment> environment, boost::shared_ptr<EpisodeContext> episode_context,
              unsigned int thread_count = 1);
+  void setCustomMarker(const std::string& key, const torch::Tensor& marker);
   ~Visualizer() = default;
 };
 }  // namespace control_force_provider::backend

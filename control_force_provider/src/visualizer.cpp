@@ -90,7 +90,7 @@ void Visualizer::callback(const ros::TimerEvent& event) {
             Vector3d pos = position(j);
             Vector3d obstacle_rcm = utils::tensorToVector(ob_rcms[i] + offset) + pos;
             Vector3d obstacle_pos = utils::tensorToVector(ob_positions[i][j] + offset) + pos;
-            boost::lock_guard<boost::mutex> lock(mtx_);
+            boost::lock_guard<boost::mutex> lock(visualizer_mtx_);
             visual_tools_.publishSphere(obstacle_rcm, rviz_visual_tools::BROWN);
             visual_tools_.publishLine(obstacle_rcm, obstacle_pos, rviz_visual_tools::BROWN);
           }
@@ -109,7 +109,7 @@ void Visualizer::callback(const ros::TimerEvent& event) {
       geometry_msgs::Point target_msg;
       double scale = std::max(ee_velocity_eigen.norm() / environment_->getMaxForce() * 0.15, 0.05);
       tf::pointEigenToMsg(ee_position_eigen + ee_velocity_eigen.normalized() * scale, target_msg);
-      boost::lock_guard<boost::mutex> lock(mtx_);
+      boost::lock_guard<boost::mutex> lock(visualizer_mtx_);
       visual_tools_.publishLine(rcm_eigen, ee_position_eigen, rviz_visual_tools::PURPLE);
       visual_tools_.publishSphere(goal_eigen, rviz_visual_tools::BLUE);
       visual_tools_.publishArrow(ee_position_msg, target_msg, rviz_visual_tools::TRANSLUCENT_LIGHT, rviz_visual_tools::SMALL);
@@ -128,7 +128,7 @@ void Visualizer::callback(const ros::TimerEvent& event) {
             Vector3d point_on_l1 = utils::tensorToVector(points_on_l1[i][j] + offset) + pos;
             Vector3d point_on_l2 = utils::tensorToVector(points_on_l2[i][j] + offset) + pos;
             // double distance = (point_on_l2 - point_on_l1).norm();
-            boost::lock_guard<boost::mutex> lock(mtx_);
+            boost::lock_guard<boost::mutex> lock(visualizer_mtx_);
             visual_tools_.publishLine(point_on_l1, point_on_l2, rviz_visual_tools::CYAN);
           }
         }
@@ -137,11 +137,41 @@ void Visualizer::callback(const ros::TimerEvent& event) {
     if (episode_context_) {
       for (size_t i = index; i < batch_size; i += thread_count_) {
         Vector3d pos = position(i);
-        boost::lock_guard<boost::mutex> lock(mtx_);
+        boost::lock_guard<boost::mutex> lock(visualizer_mtx_);
         visual_tools_.publishWireframeCuboid(Isometry3d(Translation3d(start_bb_origin + pos + 0.5 * start_bb_dims)), start_bb_dims[0], start_bb_dims[1],
                                              start_bb_dims[2], rviz_visual_tools::TRANSLUCENT);
         visual_tools_.publishWireframeCuboid(Isometry3d(Translation3d(goal_bb_origin + pos + 0.5 * goal_bb_dims)), goal_bb_dims[0], goal_bb_dims[1],
                                              goal_bb_dims[2], rviz_visual_tools::TRANSLUCENT);
+      }
+    }
+    if (!custom_marker_.empty()) {
+      boost::shared_lock_guard<boost::shared_mutex> cm_lock(custom_marker_mtx_);
+      for (auto& tuple : custom_marker_) {
+        torch::Tensor marker = tuple.second + offset;
+        switch (marker.size(1)) {
+          case 3:  // point
+            for (size_t i = index; i < batch_size; i += thread_count_) {
+              Vector3d pos = position(i);
+              Vector3d point = utils::tensorToVector(marker[i]);
+              boost::lock_guard<boost::mutex> lock(visualizer_mtx_);
+              visual_tools_.publishSphere(point + pos, rviz_visual_tools::WHITE);
+            }
+            break;
+          case 6:  // line
+          {
+            torch::Tensor points1 = marker.slice(1, 0, 3);
+            torch::Tensor points2 = marker.slice(1, 3, 6);
+            for (size_t i = index; i < batch_size; i += thread_count_) {
+              Vector3d pos = position(i);
+              Vector3d point1 = utils::tensorToVector(points1[i]);
+              Vector3d point2 = utils::tensorToVector(points2[i]);
+              boost::lock_guard<boost::mutex> lock(visualizer_mtx_);
+              visual_tools_.publishLine(point1, point2, rviz_visual_tools::WHITE);
+            }
+          } break;
+          default:
+            break;
+        }
       }
     }
   };
@@ -149,5 +179,10 @@ void Visualizer::callback(const ros::TimerEvent& event) {
   for (size_t i = 0; i < thread_count_; i++) threads.emplace_back(runnable, i);
   for (auto& thread : threads) thread.join();
   visual_tools_.trigger();
+}
+
+void Visualizer::setCustomMarker(const std::string& key, const torch::Tensor& marker) {
+  boost::lock_guard<boost::shared_mutex> lock(custom_marker_mtx_);
+  custom_marker_[key] = marker;
 }
 }  // namespace control_force_provider::backend
