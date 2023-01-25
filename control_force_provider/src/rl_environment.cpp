@@ -3,6 +3,8 @@
 #include <pybind11/stl.h>
 #include <torch/extension.h>
 
+#include <limits>
+
 using namespace control_force_provider;
 using namespace torch;
 
@@ -21,6 +23,7 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
   interval_duration_ = utils::getConfigValue<double>(config["rl"], "interval_duration")[0];
   collision_threshold_distance_ = utils::getConfigValue<double>(config["rl"], "collision_threshold_distance")[0];
   timeout_ = int(utils::getConfigValue<double>(config["rl"], "episode_timeout")[0] * 1000 / interval_duration_);
+  timeout_ = timeout_ <= 0 ? std::numeric_limits<int>::max() : timeout_;
   epoch_count_ = torch::zeros({batch_size_, 1}, utils::getTensorOptions(device_, torch::kInt32));
   goal_reached_threshold_distance_ = utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0];
   ee_positions_ = episode_context_->getStart();
@@ -60,8 +63,14 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
 }
 
 std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& actions) {
+  torch::Tensor actions_copy = actions.to(device_);
+  torch::Tensor actions_is_nan = actions_copy.isnan();
+  if (actions_is_nan.any().item().toBool()) {
+    ROS_WARN_STREAM_NAMED("RLEnvironment", "Some actions are NaN.");
+    actions_copy = torch::where(actions_is_nan, 0, actions_copy);
+  }
   // env_->clipForce(actions_copy);
-  ee_positions_ += actions.to(device_) * interval_duration_;
+  ee_positions_ += actions_copy * interval_duration_;
   ee_positions_ =
       ee_positions_.clamp(env_->getWorkspaceBbOrigin() + env_->getOffset(), env_->getWorkspaceBbOrigin() + env_->getOffset() + env_->getWorkspaceBbDims());
   // check if episode ended by reaching goal ...
@@ -85,10 +94,15 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
   return getStateDict();
 }
 
+void TorchRLEnvironment::setCustomMarker(const std::string& key, const torch::Tensor& marker) {
+  if (visualizer_) visualizer_->setCustomMarker(key, marker);
+}
+
 PYBIND11_MODULE(native, module) {
   py::class_<TorchRLEnvironment>(module, "RLEnvironment")
       .def(py::init<std::string, std::array<double, 3>>())
       .def(py::init<std::string, std::array<double, 3>, bool>())
-      .def("observe", &TorchRLEnvironment::observe, py::return_value_policy::move);
+      .def("observe", &TorchRLEnvironment::observe, py::return_value_policy::move)
+      .def("set_custom_marker", &TorchRLEnvironment::setCustomMarker);
 }
 }  // namespace control_force_provider::backend

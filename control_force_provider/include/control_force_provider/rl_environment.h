@@ -32,5 +32,6 @@ class TorchRLEnvironment : ROSNode {
  public:
   TorchRLEnvironment(const std::string& config_file, std::array<double, 3> rcm, bool force_cpu = false);
   std::map<std::string, torch::Tensor> observe(const torch::Tensor& actions);
+  void setCustomMarker(const std::string& key, const torch::Tensor& marker);
 };
 }  // namespace control_force_provider::backend
