@@ -32,8 +32,7 @@ def signal_handle():
         rl_context.save()
 
 
-def load_context(config):
-    global rl_context
+def prepare_config(config):
     num_obstacles = 0
     non_obstacles_keys = ["data"]
     for key in config["obstacles"]:
@@ -42,22 +41,26 @@ def load_context(config):
     for key in ["max_force", "workspace_bb"]:
         config["rl"][key] = config[key]
     config = config["rl"]
-    state_augmenter = rl.StateAugmenter(config["state_pattern"], num_obstacles, **config["state_augmenter"])
+    state_augmenter = rl.StateAugmenter(rl.create_state_mapping(config["state_pattern"], num_obstacles), **config["state_augmenter"])
     config["state_dim"] = reduce(lambda x, y: x + y, (x[1] for x in state_augmenter.mapping.values()))
     config["action_dim"] = action_dim
     config["reward_function"] = rl.RewardFunction(fmax=config["max_force"], interval_duration=config["interval_duration"], dg=config["goal_reached_threshold_distance"], **config["reward_function"])
     config["state_augmenter"] = state_augmenter
-    rl_context = rl.context_mapping[config["type"]](**config,
-                                                    **config[{"dqn": "dqn", "dqn_naf": "dqn", "mc": "mc"}[config["type"]]],
-                                                    **config["discretization"],
-                                                    **config["exploration"])
-    rl_context.load()
+    flattened_config = {}
+    for k1, v1 in config.items():
+        if isinstance(v1, dict):
+            for k2, v2 in v1.items():
+                flattened_config[k2] = v2
+        else:
+            flattened_config[k1] = v1
+    return flattened_config
 
 
 def main():
     global rl_context, stop
     arg_parser = ArgumentParser()
     arg_parser.add_argument("-s", "--service", action="store_true")
+    arg_parser.add_argument("-tw", "--transfer_weights", type=str)
     args, _ = arg_parser.parse_known_args()
     config_file = rospy.get_param("control_force_provider/config")
     with open(config_file, "r") as f:
@@ -66,9 +69,22 @@ def main():
         return
     if args.service:
         config["robot_batch"] = 1
-    load_context(config)
+    config = prepare_config(config)
+    rl_context = rl.context_mapping[config["type"]](**config)
+    rl_context.load()
     rospy.init_node("rl_training", anonymous=True)
-
+    if args.transfer_weights is not None:
+        new_rl_context = rl.context_mapping[config["type"]](**config)
+        for attribute_key, value in vars(rl_context).items():
+            if isinstance(value, torch.nn.Module):
+                setattr(new_rl_context, attribute_key, value)
+            elif isinstance(value, list):
+                for i, list_item in enumerate(value):
+                    if isinstance(list_item, torch.nn.Module):
+                        getattr(new_rl_context, attribute_key)[i] = list_item
+        new_rl_context.output_dir = args.transfer_weights
+        new_rl_context.save()
+        return
     if args.service:
         rospy.Service("update_network", UpdateNetwork, service_handle)
         rospy.spin()
@@ -76,7 +92,10 @@ def main():
         rl_environment = RLEnvironment(config_file, [0.3, 0., 0.45])
         state_dict = rl_environment.observe(torch.zeros((rl_context.robot_batch, 3), device=rl.DEVICE))
         while not rospy.is_shutdown():
-            state_dict = rl_environment.observe(rl_context.update(state_dict))
+            action = rl_context.update(state_dict)
+            state_dict = rl_environment.observe(action)
+            if isinstance(rl_context, rl.HierarchicalRLContext):
+                rl_environment.set_custom_marker("goals", rl_context.goals[0])
     rl_context.save()
 
 

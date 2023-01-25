@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="config" default="$(find control_force_provider)/default.config"/>
+    <arg name="target_dir"/>
+
+    <param name="control_force_provider/config" value="$(arg config)" type="str"/>
+
+    <node pkg="control_force_provider"
+          type="rl_training"
+          name="rl_training"
+          args="-tw $(arg target_dir)"
+          respawn="false" output="screen"/>
+</launch>
