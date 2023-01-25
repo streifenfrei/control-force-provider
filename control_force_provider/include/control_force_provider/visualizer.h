@@ -13,6 +13,7 @@ class Visualizer {
  private:
   static constexpr double WS_SPACE = 0.1;
   static constexpr double BLOCK_SPACE = 1;
+  static constexpr double OB_DISTANCE_BOUND = 0.1;
   const unsigned int thread_count_;
   Eigen::Vector3d bb_dims;
   double block_width;

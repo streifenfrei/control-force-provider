@@ -127,9 +127,9 @@ void Visualizer::callback(const ros::TimerEvent& event) {
             Vector3d pos = position(j);
             Vector3d point_on_l1 = utils::tensorToVector(points_on_l1[i][j] + offset) + pos;
             Vector3d point_on_l2 = utils::tensorToVector(points_on_l2[i][j] + offset) + pos;
-            // double distance = (point_on_l2 - point_on_l1).norm();
+            double color_gradient = std::min((point_on_l2 - point_on_l1).norm() / OB_DISTANCE_BOUND, 1.);
             boost::lock_guard<boost::mutex> lock(visualizer_mtx_);
-            visual_tools_.publishLine(point_on_l1, point_on_l2, rviz_visual_tools::CYAN);
+            visual_tools_.publishLine(point_on_l1, point_on_l2, visual_tools_.getColorScale(color_gradient));
           }
         }
       }
