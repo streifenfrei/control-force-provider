@@ -17,6 +17,8 @@ class TorchRLEnvironment : ROSNode {
   torch::Tensor ee_positions_;
   torch::Tensor epoch_count_;
   torch::Tensor is_terminal_;
+  torch::Tensor reached_goal_;
+  torch::Tensor collided_;
   torch::Tensor is_timeout_;
   double interval_duration_;
   unsigned int batch_size_;

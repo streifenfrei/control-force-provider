@@ -56,6 +56,8 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
       torch::cat(TensorList(&env_->getCollisionDistances()[0], env_->getCollisionDistances().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
   out["goal"] = env_->getGoal().to(utils::getTensorOptions(device_, torch::kFloat32));
   out["is_terminal"] = is_terminal_.clone();
+  out["reached_goal"] = reached_goal_.clone();
+  out["collided"] = collided_.clone();
   out["is_timeout"] = is_timeout_.clone();
   out["workspace_bb_origin"] = env_->getWorkspaceBbOrigin().to(utils::getTensorOptions(device_, torch::kFloat32));
   out["workspace_bb_dims"] = env_->getWorkspaceBbDims().to(utils::getTensorOptions(device_, torch::kFloat32));
@@ -74,19 +76,19 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
   ee_positions_ =
       ee_positions_.clamp(env_->getWorkspaceBbOrigin() + env_->getOffset(), env_->getWorkspaceBbOrigin() + env_->getOffset() + env_->getWorkspaceBbDims());
   // check if episode ended by reaching goal ...
-  torch::Tensor reached_goal = utils::norm((env_->getGoal() + env_->getOffset() - ee_positions_)) < goal_reached_threshold_distance_;
+  reached_goal_ = utils::norm((env_->getGoal() + env_->getOffset() - ee_positions_)) < goal_reached_threshold_distance_;
   // ... or by collision
-  torch::Tensor collided = torch::zeros_like(reached_goal);
+  collided_ = torch::zeros_like(reached_goal_);
   for (auto& distance_to_obs : env_->getCollisionDistances()) {
     torch::Tensor not_nan = distance_to_obs.isnan().logical_not();
-    collided = collided.logical_or(not_nan.logical_and(distance_to_obs < collision_threshold_distance_));
+    collided_ = collided_.logical_or(not_nan.logical_and(distance_to_obs < collision_threshold_distance_));
   }
   // ... or by timeout
   is_timeout_ = epoch_count_ >= timeout_;
   episode_context_->generateEpisode(is_terminal_);
   episode_context_->startEpisode(is_terminal_);
   ee_positions_ = torch::where(is_terminal_, episode_context_->getStart(), ee_positions_);
-  is_terminal_ = reached_goal.logical_or(collided.logical_or(is_timeout_));
+  is_terminal_ = reached_goal_.logical_or(collided_.logical_or(is_timeout_));
   epoch_count_ = torch::where(is_terminal_, 0, epoch_count_ + 1);
   env_->setGoal(episode_context_->getGoal());
   env_->update(ee_positions_);
