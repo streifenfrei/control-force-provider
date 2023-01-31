@@ -257,7 +257,7 @@ class DQNNAFContext(ContinuesRLContext):
                 self.summary_writer.add_scalar("dot_loss_factor", self.dot_loss_factor, self.epoch)
                 self.dot_loss_factor *= self.dot_loss_decay
             else:
-                rospy.logwarn(f"NaNs in DQN loss. Epoch {self.epoch}")
+                self.warn(f"NaNs in DQN loss. Epoch {self.epoch}")
 
         if self.epoch % self.target_network_update_rate == 0:
             self.dqn_target.load_state_dict(self.dqn_policy.state_dict())

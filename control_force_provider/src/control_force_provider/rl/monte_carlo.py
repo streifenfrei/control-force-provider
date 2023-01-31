@@ -39,23 +39,22 @@ class MonteCarloContext(DiscreteRLContext):
             last_states = torch.split(self.last_state_dict["state"], 1)
             actions = torch.split(self.action_index, 1)
             was_exploring = self.real_action_index != self.action_index
-            weights = torch.where(was_exploring, 0,
-                                  torch.where(self.action_index < len(self.action_space.dynamic_space),
-                                              1 / (1 - (self.exploration_epsilon * self.exploration_goal_p / len(self.action_space.dynamic_space))),
-                                              1 / (1 - (self.exploration_epsilon * (1 - self.exploration_goal_p) / len(self.action_space.static_space))))).split(1)
+            weights = torch.where(was_exploring, 0, 1 / self.exploration_probs.gather(-1, self.action_index))
             rewards = torch.split(reward, 1)
             for i in range(self.robot_batch):
                 if self.soft_is < EPSILON and was_exploring[i]:
                     self.episode_buffer[i].clear()
                     continue
-                if not rewards[i].isnan():
-                    self.episode_buffer[i].append(MonteCarloUpdateTuple(last_states[i], actions[i], rewards[i], weights[i]))
-                elif state_dict["is_terminal"][i]:
+                if not rewards[i].isnan() and not last_states[i].isnan().any() and not actions[i].isnan().any():
+                    self.episode_buffer[i].append(MonteCarloUpdateTuple(last_states[i], actions[i], rewards[i], weights[i].unsqueeze(-1)))
+                if state_dict["is_terminal"][i] and self.episode_buffer[i]:
                     self.episode_buffer[i].reverse()
                     self.update_buffer.append(self.episode_buffer[i])
                     episode_length = len(self.episode_buffer[i])
                     self.update_buffer_size += episode_length
                     self.episode_buffer[i] = []
+                elif "abort" in state_dict and state_dict["abort"][i]:
+                    self.episode_buffer[i].clear()
         # we're ready for an update
         if self.update_buffer_size >= self.batch_size:
             update_transitions = []
@@ -103,7 +102,7 @@ class MonteCarloContext(DiscreteRLContext):
                 self.summary_writer.add_scalar("exploration/soft_is", self.soft_is, self.epoch)
                 self.loss_accumulator.reset()
             else:
-                rospy.logwarn(f"NaNs in MC loss. Epoch {self.epoch}")
+                self.warn(f"NaNs in MC loss. Epoch {self.epoch}")
             self.episode_buffer = [[] for _ in range(self.robot_batch)]
             self.update_buffer = []
             self.update_buffer_size = 0
