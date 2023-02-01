@@ -91,6 +91,7 @@ class RewardFunction:
         self.dg = torch.tensor(float(dg), device=DEVICE)
         self.rg = torch.tensor(float(rg), device=DEVICE)
         self.interval_duration = float(interval_duration)
+        self.max_distance = None
 
     def __call__(self, state_dict, last_state_dict, mask):
         goal = state_dict["goal"]
@@ -108,8 +109,9 @@ class RewardFunction:
             collision_penalty = torch.where(collision_distance.isnan(), 0, collision_penalty + (self.dc / (collision_distance + EPSILON)) ** self.mc)
         collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
         goal_reward = torch.where(mask, torch.where(distance_to_goal > self.dg, torch.zeros_like(collision_penalty), self.rg), torch.nan)
-        max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
-        timeout_penalty = self.min_timeout_penalty + ((distance_to_goal / max_distance) * self.timeout_penalty_range)
+        if self.max_distance is None:
+            self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
+        timeout_penalty = self.min_timeout_penalty + ((distance_to_goal / self.max_distance) * self.timeout_penalty_range)
         goal_reward = torch.where(state_dict["is_timeout"], timeout_penalty, goal_reward)
         total_reward = motion_reward + collision_penalty + goal_reward
         return total_reward, motion_reward, collision_penalty, goal_reward
@@ -220,6 +222,7 @@ class RLContext(ABC):
         self.batch_size = batch_size
         self.robot_batch = robot_batch
         self.max_force = float(max_force)
+        self.max_distance = None
         self.output_dir = output_directory
         self.save_rate = save_rate
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"), max_queue=10000, flush_secs=10)
@@ -293,6 +296,8 @@ class RLContext(ABC):
             self._load_impl(state_dict)
 
     def update(self, state_dict):
+        if self.max_distance is None:
+            self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
         goal = state_dict["goal"]
         if self.goal is None:
             self.goal = goal
@@ -356,15 +361,18 @@ class RLContext(ABC):
 
 
 class DiscreteRLContext(RLContext):
-    def __init__(self, grid_order, magnitude_order, exploration_epsilon, exploration_goal_p, exploration_decay, **kwargs):
+    def __init__(self, grid_order, magnitude_order, exploration_epsilon, exploration_min_goal_p, exploration_max_goal_p, exploration_decay, **kwargs):
         super().__init__(**kwargs)
         self.action_space = ActionSpace(grid_order, magnitude_order, self.max_force)
         self.exploration_probs = None
         self.exploration_epsilon = exploration_epsilon
-        self.exploration_goal_p = exploration_goal_p
+        self.exploration_min_goal_p = max((1 / (len(self.action_space) - 1)) * len(self.action_space.goal_vectors), exploration_min_goal_p)
+        self.exploration_max_goal_p = exploration_max_goal_p
+        self.exploration_goal_p_range = exploration_max_goal_p - self.exploration_min_goal_p
         self.exploration_decay = exploration_decay
         self.one_minus_exploration_decay = 1 - self.exploration_decay
         self.action_index = None
+        self.max_distance = None
 
     @abstractmethod
     def _get_state_dict_(self):
@@ -387,18 +395,22 @@ class DiscreteRLContext(RLContext):
         self._load_impl_(state_dict)
 
     def _post_update(self, state_dict):
-        self.action_space.update_goal_vector(state_dict["goal"] - state_dict["robot_position"])
+        goal_vector = state_dict["goal"] - state_dict["robot_position"]
+        exploration_goal_p = (torch.linalg.vector_norm(goal_vector, dim=-1, keepdims=True) / self.max_distance) * self.exploration_goal_p_range + self.exploration_min_goal_p
+        exploration_goal_p = torch.minimum(exploration_goal_p, torch.tensor(self.exploration_max_goal_p))
+        self.action_space.update_goal_vector(goal_vector)
         # explore
         self.exploration_probs = torch.full([self.robot_batch, len(self.action_space)], torch.nan)
         n = torch.zeros_like(self.action_index)
         for i in range(len(self.action_space.goal_vectors)):
             n = torch.where(self.action_space.goal_vectors_index_start + i == self.action_index, n, n + 1)
         for i in range(len(self.action_space.goal_vectors)):
-            self.exploration_probs = self.exploration_probs.scatter(-1, self.action_space.goal_vectors_index_start + i, self.exploration_epsilon * self.exploration_goal_p / n)
+            self.exploration_probs = self.exploration_probs.scatter(-1, self.action_space.goal_vectors_index_start + i, self.exploration_epsilon * exploration_goal_p / n)
         self.exploration_probs = self.exploration_probs.scatter(-1, self.action_index, 1 - self.exploration_epsilon)
         mask = self.exploration_probs.isnan()
         n = mask.sum(-1, keepdims=True)
-        self.exploration_probs = torch.where(mask, self.exploration_epsilon * (1 - self.exploration_goal_p) / n, self.exploration_probs)
+        factor = torch.where(n == len(self.action_space) - 1, 1, 1 - exploration_goal_p)
+        self.exploration_probs = torch.where(mask, self.exploration_epsilon * factor / n, self.exploration_probs)
         self.summary_writer.add_scalar("exploration/epsilon", self.exploration_epsilon, self.epoch)
         episodes_passed_list = list(self.episodes_passed)
         successes_list = list(self.successes)
@@ -417,7 +429,7 @@ class ContinuesRLContext(RLContext):
                  exploration_angle_sigma,
                  exploration_bb_rep_p,
                  exploration_magnitude_sigma,
-                 exploration_goal_p,
+                 exploration_max_goal_p,
                  exploration_decay,
                  exploration_duration,
                  **kwargs):
@@ -429,7 +441,7 @@ class ContinuesRLContext(RLContext):
         self.exploration_bb_rep_dims = np.zeros(3)
         self.exploration_magnitude_sigma = exploration_magnitude_sigma
         self.exploration_magnitude = 0
-        self.exploration_goal_p = exploration_goal_p
+        self.exploration_goal_p = exploration_max_goal_p
         self.exploration_decay = exploration_decay
         self.exploration_duration = int(exploration_duration * 1000 / self.interval_duration)
         self.exploration_index = 0

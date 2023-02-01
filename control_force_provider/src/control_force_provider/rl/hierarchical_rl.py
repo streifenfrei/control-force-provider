@@ -26,6 +26,7 @@ class HierarchicalRLContext(RLContext):
         assert level_num > 1
         from . import context_mapping
         kwargs["discount_factor"] = (-1 / distance_factor) + 1
+        self.max_distance_factor = 3.0
         self.agents = [context_mapping[algorithm](**kwargs, log=False)]
         self.reached_goal_threshold_distance = self.agents[0].reward_function.dg
         self.goals = [torch.full([self.robot_batch, 3], torch.nan) for _ in range(level_num)]
@@ -38,6 +39,7 @@ class HierarchicalRLContext(RLContext):
         for i in range(1, level_num):
             kwargs["max_force"] *= distance_factor
             self.agents.append(context_mapping[algorithm](**kwargs, log=False))
+            self.agents[-2].max_distance = self.max_distance_factor * self.agents[-1].max_force
         for i, agent in enumerate(self.agents):
             agent.summary_writer = SummaryWriter(os.path.join(self.output_dir, "logs", f"level_{i}"))
             self.state_provider.append(self.StateProvider(self.state_augmenter.mapping))
