@@ -28,7 +28,6 @@ class HierarchicalRLContext(RLContext):
         kwargs["discount_factor"] = (-1 / distance_factor) + 1
         self.agents = [context_mapping[algorithm](**kwargs, log=False)]
         self.reached_goal_threshold_distance = self.agents[0].reward_function.dg
-        self.timeout_penalty = self.agents[0].reward_function.timeout_penalty
         self.goals = [torch.full([self.robot_batch, 3], torch.nan) for _ in range(level_num)]
         self.rewards = [torch.zeros([self.robot_batch, 1]) for _ in range(level_num)]
         self.last_terminal = torch.zeros([self.robot_batch, 1], dtype=torch.bool)
@@ -65,8 +64,6 @@ class HierarchicalRLContext(RLContext):
     def _update_impl(self, state_dict, reward):
         current_state_dict = state_dict.copy()
         reward = reward.view(-1, 1)
-        self.rewards[-1] = torch.where(state_dict["is_timeout"], self.rewards[-1] + self.timeout_penalty, self.rewards[-1])
-        reward = torch.where(state_dict["is_timeout"], reward - self.timeout_penalty, reward)
         next_position = None
         last_mask = None
         for i in reversed(range(1, len(self.agents))):

@@ -80,12 +80,13 @@ class StateAugmenter:
 
 
 class RewardFunction:
-    def __init__(self, fmax, interval_duration, dc, mc, motion_penalty, timeout_penalty, max_penalty, dg, rg):
+    def __init__(self, fmax, interval_duration, dc, mc, motion_penalty, min_timeout_penalty, max_timeout_penalty, max_penalty, dg, rg):
         self.fmax = torch.tensor(float(fmax), device=DEVICE)
         self.dc = torch.tensor(float(dc), device=DEVICE)
         self.mc = torch.tensor(float(mc), device=DEVICE)
         self.motion_penalty = motion_penalty
-        self.timeout_penalty = timeout_penalty
+        self.min_timeout_penalty = min_timeout_penalty
+        self.timeout_penalty_range = max_timeout_penalty - min_timeout_penalty
         self.max_penalty = torch.tensor(float(max_penalty), device=DEVICE)
         self.dg = torch.tensor(float(dg), device=DEVICE)
         self.rg = torch.tensor(float(rg), device=DEVICE)
@@ -107,7 +108,9 @@ class RewardFunction:
             collision_penalty = torch.where(collision_distance.isnan(), 0, collision_penalty + (self.dc / (collision_distance + EPSILON)) ** self.mc)
         collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
         goal_reward = torch.where(mask, torch.where(distance_to_goal > self.dg, torch.zeros_like(collision_penalty), self.rg), torch.nan)
-        goal_reward = torch.where(state_dict["is_timeout"], self.timeout_penalty, goal_reward)
+        max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
+        timeout_penalty = self.min_timeout_penalty + ((distance_to_goal / max_distance) * self.timeout_penalty_range)
+        goal_reward = torch.where(state_dict["is_timeout"], timeout_penalty, goal_reward)
         total_reward = motion_reward + collision_penalty + goal_reward
         return total_reward, motion_reward, collision_penalty, goal_reward
 
