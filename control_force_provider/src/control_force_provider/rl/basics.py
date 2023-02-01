@@ -7,7 +7,7 @@ import rospy
 from enum import Enum
 from abc import ABC, abstractmethod
 from torch.utils.tensorboard import SummaryWriter
-from collections import namedtuple, defaultdict
+from collections import namedtuple, defaultdict, deque
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EPSILON = 1e-9
@@ -239,10 +239,10 @@ class RLContext(ABC):
         self.velocity_batch = None
         self.action_batch = None
         self.reward_batch = None
-        self.successes = 0
-        self.collisions = 0
-        self.episodes_passed = 0
-        self.timeouts = 0
+        self.successes = deque([], 2 * self.log_interval)
+        self.collisions = deque([], 2 * self.log_interval)
+        self.episodes_passed = deque([], 2 * self.log_interval)
+        self.timeouts = deque([], 2 * self.log_interval)
         self.log = log
 
     def __del__(self):
@@ -326,15 +326,16 @@ class RLContext(ABC):
         self.last_state_dict = state_dict
         # log
         if self.epoch > 0:
-            self.successes += state_dict["reached_goal"].sum().item()
-            self.collisions += state_dict["collided"].sum().item()
-            self.timeouts = state_dict["is_timeout"].sum().item()
-            self.episodes_passed += state_dict["is_terminal"].sum().item()
+            self.successes.append(state_dict["reached_goal"].sum().item())
+            self.collisions.append(state_dict["collided"].sum().item())
+            self.timeouts.append(state_dict["is_timeout"].sum().item())
+            self.episodes_passed.append(state_dict["is_terminal"].sum().item())
             if self.epoch % self.log_interval == 0:
-                self.summary_writer.add_scalar("metrics/success_ratio", self.successes / (self.episodes_passed + EPSILON), self.epoch)
-                self.summary_writer.add_scalar("metrics/collision_ratio", self.collisions / (self.episodes_passed + EPSILON), self.epoch)
-                self.summary_writer.add_scalar("metrics/timeout_ratio", self.timeouts / (self.episodes_passed + EPSILON), self.epoch)
-                self.successes = self.collisions = self.timeouts = self.episodes_passed = 0
+                if len(self.successes) >= self.log_interval:
+                    episodes_passed = sum(list(self.episodes_passed)[-self.log_interval:])
+                    self.summary_writer.add_scalar("metrics/success_ratio", sum(list(self.successes)[-self.log_interval:]) / (episodes_passed + EPSILON), self.epoch)
+                    self.summary_writer.add_scalar("metrics/collision_ratio", sum(list(self.collisions)[-self.log_interval:]) / (episodes_passed + EPSILON), self.epoch)
+                    self.summary_writer.add_scalar("metrics/timeout_ratio", sum(list(self.timeouts)[-self.log_interval:]) / (episodes_passed + EPSILON), self.epoch)
                 if self.log:
                     string = f"Epoch {self.epoch} | "
                     for key, value in self.log_dict.items():
@@ -359,6 +360,7 @@ class DiscreteRLContext(RLContext):
         self.exploration_epsilon = exploration_epsilon
         self.exploration_goal_p = exploration_goal_p
         self.exploration_decay = exploration_decay
+        self.one_minus_exploration_decay = 1 - self.exploration_decay
         self.action_index = None
 
     @abstractmethod
@@ -395,7 +397,13 @@ class DiscreteRLContext(RLContext):
         n = mask.sum(-1, keepdims=True)
         self.exploration_probs = torch.where(mask, self.exploration_epsilon * (1 - self.exploration_goal_p) / n, self.exploration_probs)
         self.summary_writer.add_scalar("exploration/epsilon", self.exploration_epsilon, self.epoch)
-        self.exploration_epsilon *= self.exploration_decay
+        episodes_passed_list = list(self.episodes_passed)
+        successes_list = list(self.successes)
+        if len(self.successes) == 2 * self.log_interval and \
+                sum(episodes_passed_list[:self.log_interval]) / sum(successes_list[:self.log_interval]) > sum(episodes_passed_list[-self.log_interval:]) / sum(successes_list[-self.log_interval:]):
+            self.exploration_epsilon = self.exploration_epsilon * self.exploration_decay + self.one_minus_exploration_decay
+        else:
+            self.exploration_epsilon *= self.exploration_decay
         self.action_index = torch.distributions.Categorical(self.exploration_probs).sample().unsqueeze(-1)
         # get actual action vector
         self.action = self.action_space.get_action(self.action_index)

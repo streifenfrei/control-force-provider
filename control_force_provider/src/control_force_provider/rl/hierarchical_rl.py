@@ -114,7 +114,7 @@ class HierarchicalRLContext(RLContext):
                 self.goals[i - 1][mask, :] = next_position[mask, :]
             # setup for next level
             last_mask = mask
-            current_state_dict["is_terminal"] = reached_step.logical_or(state_dict["collided"])
+            current_state_dict["is_terminal"] = reached_step.logical_or(state_dict["collided"]).logical_or(state_dict["is_timeout"])
             current_state_dict["reached_goal"] = reached_step
         # update level 0
         # current_state_dict["is_timeout"] = torch.zeros_like(state_dict["is_timeout"])
