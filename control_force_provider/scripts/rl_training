@@ -65,7 +65,7 @@ def main():
     config_file = rospy.get_param("control_force_provider/config")
     with open(config_file, "r") as f:
         config = yaml.safe_load(f)
-    if config["algorithm"] != "rl" or not config["rl"]["train"]:
+    if config["algorithm"] != "rl":
         return
     if args.service:
         config["robot_batch"] = 1
