@@ -10,13 +10,14 @@
 using namespace Eigen;
 namespace control_force_provider::backend {
 Visualizer::Visualizer(ros::NodeHandle& node_handle, boost::shared_ptr<Environment> environment, boost::shared_ptr<EpisodeContext> episode_context,
-                       unsigned int thread_count)
+                       unsigned int thread_count, unsigned int max_visualizations)
     : node_handle_(node_handle),
       environment_(environment),
       episode_context_(episode_context),
       visual_tools_("world", "/visualization_marker_array", node_handle),
       timer_(node_handle_.createTimer(ros::Duration(0.05), &Visualizer::callback, this)),
-      thread_count_(thread_count) {
+      thread_count_(thread_count),
+      max_visualizations_(max_visualizations) {
   visual_tools_.enableBatchPublishing();
   bb_dims = utils::tensorToVector(environment_->getWorkspaceBbDims());
   bb_width = bb_dims[0] + WS_SPACE;
@@ -76,7 +77,7 @@ void Visualizer::callback(const ros::TimerEvent& event) {
     goal_bb_origin = utils::tensorToVector(episode_context_->goal_bb_origin);
     goal_bb_dims = utils::tensorToVector(episode_context_->goal_bb_dims);
   }
-  int batch_size = ee_position.size(0);
+  int batch_size = std::min((int)ee_position.size(0), (int)max_visualizations_);
   auto runnable = [&](int index) {
     // obstacles
     {

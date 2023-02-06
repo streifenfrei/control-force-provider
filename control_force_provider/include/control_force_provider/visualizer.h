@@ -15,6 +15,7 @@ class Visualizer {
   static constexpr double BLOCK_SPACE = 1;
   static constexpr double OB_DISTANCE_BOUND = 0.1;
   const unsigned int thread_count_;
+  unsigned int max_visualizations_;
   Eigen::Vector3d bb_dims;
   double block_width;
   double bb_width;
@@ -33,7 +34,7 @@ class Visualizer {
 
  public:
   Visualizer(ros::NodeHandle& node_handle, boost::shared_ptr<Environment> environment, boost::shared_ptr<EpisodeContext> episode_context,
-             unsigned int thread_count = 1);
+             unsigned int thread_count = 1, unsigned int max_visualizations = 16);
   void setCustomMarker(const std::string& key, const torch::Tensor& marker);
   ~Visualizer() = default;
 };
