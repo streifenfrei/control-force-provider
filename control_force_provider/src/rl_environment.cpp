@@ -87,6 +87,7 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
   is_timeout_ = epoch_count_ >= timeout_;
   episode_context_->generateEpisode(is_terminal_);
   episode_context_->startEpisode(is_terminal_);
+  env_->setStartTime(torch::where(is_terminal_, Time::now(), env_->getStartTime()));
   ee_positions_ = torch::where(is_terminal_, episode_context_->getStart(), ee_positions_);
   is_terminal_ = reached_goal_.logical_or(collided_.logical_or(is_timeout_));
   epoch_count_ = torch::where(is_terminal_, 0, epoch_count_ + 1);

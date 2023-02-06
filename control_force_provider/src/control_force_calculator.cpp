@@ -36,8 +36,8 @@ Environment::Environment(const YAML::Node& config, int batch_size, torch::Device
       ee_velocity_(torch::zeros({batch_size, 3}, utils::getTensorOptions(device))),
       rcm_(torch::zeros(3, utils::getTensorOptions(device))),
       goal_(torch::zeros({batch_size, 3}, utils::getTensorOptions(device))),
-      start_time_(0),
-      elapsed_time_(0),
+      start_time_(torch::zeros({batch_size, 1}, utils::getTensorOptions(device))),
+      elapsed_time_(torch::zeros({batch_size, 1}, utils::getTensorOptions(device))),
       workspace_bb_origin_(utils::createTensor(utils::getConfigValue<double>(config, "workspace_bb"), 0, 3, device)),
       workspace_bb_dims_(utils::createTensor(utils::getConfigValue<double>(config, "workspace_bb"), 3, 6, device)),
       max_force_(utils::getConfigValue<double>(config, "max_force")[0]),
@@ -198,11 +198,11 @@ void Environment::setOffset(const torch::Tensor& offset) {
 }
 const torch::Tensor& Environment::getWorkspaceBbDims() const { return workspace_bb_dims_; }
 double Environment::getMaxForce() const { return max_force_.toDouble(); }
-double Environment::getElapsedTime() const { return elapsed_time_.toDouble(); }
-double Environment::getStartTime() const { return start_time_; }
-void Environment::setStartTime(double startTime) {
+const torch::Tensor& Environment::getElapsedTime() const { return elapsed_time_; }
+const torch::Tensor& Environment::getStartTime() const { return start_time_; }
+void Environment::setStartTime(const torch::Tensor& startTime) {
   start_time_ = startTime;
-  elapsed_time_ = 0;
+  elapsed_time_ = Time::now() - start_time_;
 }
 const std::vector<boost::shared_ptr<Obstacle>>& Environment::getObstacles() const { return obstacles_; }
 const boost::shared_ptr<ObstacleLoader>& Environment::getObstacleLoader() const { return obstacle_loader_; }
@@ -302,10 +302,9 @@ StateProvider::StatePopulator StateProvider::createPopulatorFromString(const Env
     for (auto& rcm : env.getObRCMs()) populator.tensors_.push_back(&rcm);
   } else if (id == "gol") {
     populator.tensors_.push_back(&env.getGoal());
-    //} else if (id == "tim") {
-    //  populator.length_ = 1;
-    //  populator.tensors_.push_back(&cfc.elapsed_time);
-
+  } else if (id == "tim") {
+    populator.length_ = 1;
+    populator.tensors_.push_back(&env.getElapsedTime());
   } else {
     ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Unknown id in state pattern: " << id);
   }
@@ -444,7 +443,7 @@ torch::Tensor ReinforcementLearningAgent::getAction() {
       auto workspace_bb_dims_acc = env->getWorkspaceBbDims().accessor<double, 1>();
       for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_origin[i] = workspace_bb_origin_acc[i];
       for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_dims[i] = workspace_bb_dims_acc[i];
-      srv.request.elapsed_time = env->getElapsedTime();
+      srv.request.elapsed_time = env->getElapsedTime().item().toDouble();
       if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to call training service.");
       return utils::createTensor(std::vector<double>(std::begin(srv.response.action), std::end(srv.response.action)));
     } else

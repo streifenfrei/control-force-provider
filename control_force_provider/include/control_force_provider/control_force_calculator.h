@@ -55,8 +55,8 @@ class Environment {
   boost::shared_mutex offset_mtx;
   const torch::Tensor workspace_bb_dims_;
   const torch::Scalar max_force_;
-  double start_time_;
-  torch::Scalar elapsed_time_;
+  torch::Tensor start_time_;
+  torch::Tensor elapsed_time_;
   std::vector<boost::shared_ptr<Obstacle>> obstacles_;
   boost::shared_ptr<ObstacleLoader> obstacle_loader_;
 
@@ -97,11 +97,11 @@ class Environment {
   const torch::Tensor& getOffset() const;
   boost::shared_lock_guard<boost::shared_mutex> getOffsetLock();
   void setOffset(const torch::Tensor& offset);
-  double getStartTime() const;
-  void setStartTime(double startTime);
+  const torch::Tensor& getStartTime() const;
+  void setStartTime(const torch::Tensor& startTime);
   const torch::Tensor& getWorkspaceBbDims() const;
   double getMaxForce() const;
-  double getElapsedTime() const;
+  const torch::Tensor& getElapsedTime() const;
   void update(const torch::Tensor& ee_position);
   void clipForce(torch::Tensor& force);
 };
@@ -133,7 +133,7 @@ class ControlForceCalculator {
   void setGoal(const torch::Tensor& goal_) {
     goal_available_ = true;
     env->setGoal(goal_);
-    env->setStartTime(Time::now());
+    env->setStartTime(torch::full({1, 1}, Time::now(), utils::getTensorOptions()));
   };
   const boost::shared_ptr<Environment>& getEnvironment() const { return env; };
   virtual ~ControlForceCalculator() = default;
