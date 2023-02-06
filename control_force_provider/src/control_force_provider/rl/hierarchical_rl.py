@@ -29,9 +29,9 @@ class HierarchicalRLContext(RLContext):
         self.max_distance_factor = 3.0
         self.agents = [context_mapping[algorithm](**kwargs, log=False)]
         self.reached_goal_threshold_distance = self.agents[0].reward_function.dg
-        self.goals = [torch.full([self.robot_batch, 3], torch.nan) for _ in range(level_num)]
-        self.rewards = [torch.zeros([self.robot_batch, 1]) for _ in range(level_num)]
-        self.last_terminal = torch.zeros([self.robot_batch, 1], dtype=torch.bool)
+        self.goals = [torch.full([self.robot_batch, 3], torch.nan, device=DEVICE) for _ in range(level_num)]
+        self.rewards = [torch.zeros([self.robot_batch, 1], device=DEVICE) for _ in range(level_num)]
+        self.last_terminal = torch.zeros([self.robot_batch, 1], dtype=torch.bool, device=DEVICE)
         self.state_provider = []
         kwargs["max_force"] = float(kwargs["max_force"])
         kwargs["max_force"] *= self.interval_duration
@@ -69,7 +69,7 @@ class HierarchicalRLContext(RLContext):
         next_position = None
         last_mask = None
         for i in reversed(range(1, len(self.agents))):
-            reached_step = torch.ones([self.robot_batch, 1], dtype=torch.bool) if self.goals[i - 1].isnan().any() \
+            reached_step = torch.ones([self.robot_batch, 1], dtype=torch.bool, device=DEVICE) if self.goals[i - 1].isnan().any() \
                 else torch.linalg.norm(state_dict["robot_position"] - self.goals[i - 1], dim=-1, keepdims=True) <= self.reached_goal_threshold_distance
             self.rewards[i] += reward
             self.agents[i].reward_function.reward = self.rewards[i].clone()

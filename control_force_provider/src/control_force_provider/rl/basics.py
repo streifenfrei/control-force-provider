@@ -96,7 +96,7 @@ class RewardFunction:
     def __call__(self, state_dict, last_state_dict, mask):
         goal = state_dict["goal"]
         if last_state_dict is None:
-            out = torch.full([goal.size(0)], torch.nan)
+            out = torch.full([goal.size(0)], torch.nan, device=DEVICE)
             return out, out, out, out
         robot_position = state_dict["robot_position"]
         # last_robot_position = last_state_dict["robot_position"]
@@ -403,7 +403,7 @@ class DiscreteRLContext(RLContext):
             exploration_goal_p = torch.minimum(exploration_goal_p, torch.tensor(self.exploration_max_goal_p))
             self.action_space.update_goal_vector(goal_vector)
             # explore
-            self.exploration_probs = torch.full([self.robot_batch, len(self.action_space)], torch.nan)
+            self.exploration_probs = torch.full([self.robot_batch, len(self.action_space)], torch.nan, device=DEVICE)
             n = torch.zeros_like(self.action_index)
             for i in range(len(self.action_space.goal_vectors)):
                 n = torch.where(self.action_space.goal_vectors_index_start + i == self.action_index, n, n + 1)
