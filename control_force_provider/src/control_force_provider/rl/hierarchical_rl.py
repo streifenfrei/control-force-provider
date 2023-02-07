@@ -56,13 +56,6 @@ class HierarchicalRLContext(RLContext):
         for i, agent in enumerate(self.agents):
             agent._load_impl(state_dict[f"level_{i}"])
 
-    @staticmethod
-    def _copy_state_dict(state_dict):
-        state_dict_copy = {}
-        for key, value in state_dict.items():
-            state_dict_copy[key] = value.clone()
-        return state_dict_copy
-
     def _update_impl(self, state_dict, reward):
         current_state_dict = state_dict.copy()
         reward = reward.view(-1, 1)

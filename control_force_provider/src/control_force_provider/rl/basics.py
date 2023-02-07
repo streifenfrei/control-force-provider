@@ -230,6 +230,7 @@ class RLContext(ABC):
         self.log_interval = 10000
         self.log_dict = {"reward": 0}
         self.episode_accumulators = defaultdict(RLContext.AccumulatorFactory(robot_batch))
+        self.episode_accumulators_mean = {}
         self.reward_function = reward_function
         self.state_augmenter = state_augmenter
         self.last_state_dict = None
@@ -297,6 +298,13 @@ class RLContext(ABC):
             self.total_episode_count = self.last_episode_count = state_dict["episode"]
             self._load_impl(state_dict)
 
+    @staticmethod
+    def _copy_state_dict(state_dict):
+        state_dict_copy = {}
+        for key, value in state_dict.items():
+            state_dict_copy[key] = value.clone()
+        return state_dict_copy
+
     def update(self, state_dict):
         if self.max_distance is None:
             self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
@@ -308,13 +316,12 @@ class RLContext(ABC):
         is_not_new_episode = is_new_episode.logical_not()
         if is_new_episode.any():
             for key in self.episode_accumulators:
-                for i, value in enumerate(self.episode_accumulators[key].get_value(is_new_episode)):
-                    self.summary_writer.add_scalar(key, value, self.total_episode_count + i)
+                value = self.episode_accumulators[key].get_value(is_new_episode)
+                if key not in self.episode_accumulators_mean:
+                    self.episode_accumulators_mean[key] = value if key not in self.episode_accumulators_mean else self.episode_accumulators_mean[key] + value
                 self.episode_accumulators[key].reset(is_new_episode)
             steps_per_episode = torch.masked_select(self.epoch - self.episode_start, is_new_episode).cpu().numpy()
-            for value in steps_per_episode:
-                self.summary_writer.add_scalar("steps_per_episode", value, self.total_episode_count)
-                self.total_episode_count += 1
+            self.total_episode_count += is_new_episode.sum().item()
             self.goal = goal
             self.episode_start = torch.where(is_new_episode, self.epoch, self.episode_start)
         # get reward
@@ -322,18 +329,14 @@ class RLContext(ABC):
         total_reward_mean = torch.masked_select(reward, torch.logical_not(reward.isnan())).mean().cpu()
         if not torch.isnan(total_reward_mean):
             self.log_dict["reward"] += total_reward_mean
-        self.summary_writer.add_scalar("reward/per_epoch/total", total_reward_mean, self.epoch)
         self.episode_accumulators["reward/per_episode/total"].update_state(reward, is_not_new_episode)
-        self.summary_writer.add_scalar("reward/per_epoch/motion", torch.masked_select(motion_reward, torch.logical_not(motion_reward.isnan())).mean(), self.epoch)
         self.episode_accumulators["reward/per_episode/motion"].update_state(motion_reward, is_not_new_episode)
-        self.summary_writer.add_scalar("reward/per_epoch/collision", torch.masked_select(collision_penalty, torch.logical_not(collision_penalty.isnan())).mean(), self.epoch)
         self.episode_accumulators["reward/per_episode/collision"].update_state(collision_penalty, is_not_new_episode)
-        self.summary_writer.add_scalar("reward/per_epoch/goal/", torch.masked_select(goal_reward, torch.logical_not(goal_reward.isnan())).mean(), self.epoch)
         self.episode_accumulators["reward/per_episode/goal"].update_state(goal_reward, is_not_new_episode)
         # do the update
         self._update_impl(state_dict, reward)
         self._post_update(state_dict)
-        self.last_state_dict = state_dict
+        self.last_state_dict = self._copy_state_dict(state_dict)
         # log
         if self.epoch > 0:
             self.successes.append(state_dict["reached_goal"].sum().item())
@@ -346,10 +349,14 @@ class RLContext(ABC):
                     self.summary_writer.add_scalar("metrics/success_ratio", sum(list(self.successes)[-self.log_interval:]) / (episodes_passed + EPSILON), self.epoch)
                     self.summary_writer.add_scalar("metrics/collision_ratio", sum(list(self.collisions)[-self.log_interval:]) / (episodes_passed + EPSILON), self.epoch)
                     self.summary_writer.add_scalar("metrics/timeout_ratio", sum(list(self.timeouts)[-self.log_interval:]) / (episodes_passed + EPSILON), self.epoch)
+                for key in self.episode_accumulators_mean:
+                    self.summary_writer.add_scalar(key, sum(self.episode_accumulators_mean[key] / len(self.episode_accumulators_mean), self.total_episode_count))
                 if self.log:
                     string = f"Epoch {self.epoch} | "
                     for key, value in self.log_dict.items():
-                        string += f"{key}: {value / self.log_interval}\t "
+                        mean = value / self.log_interval
+                        self.summary_writer.add_scalar(key, mean, self.total_episode_count)
+                        string += f"{key}: {mean}\t "
                         self.log_dict[key] = 0
                     rospy.loginfo(string)
             if self.epoch % self.save_rate == 0:
@@ -414,7 +421,7 @@ class DiscreteRLContext(RLContext):
             n = mask.sum(-1, keepdims=True)
             factor = torch.where(n == len(self.action_space) - 1, 1, 1 - exploration_goal_p)
             self.exploration_probs = torch.where(mask, self.exploration_epsilon * factor / n, self.exploration_probs)
-            self.summary_writer.add_scalar("exploration/epsilon", self.exploration_epsilon, self.epoch)
+            #self.summary_writer.add_scalar("exploration/epsilon", self.exploration_epsilon, self.epoch)
             episodes_passed_list = list(self.episodes_passed)
             successes_list = list(self.successes)
             if len(self.successes) == 2 * self.log_interval and \
