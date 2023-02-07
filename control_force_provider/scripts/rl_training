@@ -61,6 +61,7 @@ def main():
     arg_parser = ArgumentParser()
     arg_parser.add_argument("-s", "--service", action="store_true")
     arg_parser.add_argument("-tw", "--transfer_weights", type=str)
+    arg_parser.add_argument("-v", "--visualize", action="store_true")
     args, _ = arg_parser.parse_known_args()
     config_file = rospy.get_param("control_force_provider/config")
     with open(config_file, "r") as f:
@@ -89,12 +90,12 @@ def main():
         rospy.Service("update_network", UpdateNetwork, service_handle)
         rospy.spin()
     else:
-        rl_environment = RLEnvironment(config_file, [0.3, 0., 0.45])
+        rl_environment = RLEnvironment(config_file, [0.3, 0., 0.45], False, args.visualize)
         state_dict = rl_environment.observe(torch.zeros((rl_context.robot_batch, 3), device=rl.DEVICE))
         while not rospy.is_shutdown():
             action = rl_context.update(state_dict)
             state_dict = rl_environment.observe(action)
-            if isinstance(rl_context, rl.HierarchicalRLContext):
+            if args.visualize and isinstance(rl_context, rl.HierarchicalRLContext):
                 rl_environment.set_custom_marker("goals", rl_context.goals[0])
     rl_context.save()
 

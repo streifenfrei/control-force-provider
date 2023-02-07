@@ -11,6 +11,7 @@
     <node pkg="control_force_provider"
           type="rl_training"
           name="rl_training"
+          args="$(eval '-v' if arg('rviz') else '')"
           respawn="false" output="screen"/>
 
     <machine name="remote"
