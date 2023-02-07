@@ -197,7 +197,7 @@ void Environment::setOffset(const torch::Tensor& offset) {
   offset_ = offset_dev;
 }
 const torch::Tensor& Environment::getWorkspaceBbDims() const { return workspace_bb_dims_; }
-double Environment::getMaxForce() const { return max_force_.toDouble(); }
+double Environment::getMaxForce() const { return max_force_.toFloat(); }
 const torch::Tensor& Environment::getElapsedTime() const { return elapsed_time_; }
 const torch::Tensor& Environment::getStartTime() const { return start_time_; }
 void Environment::setStartTime(const torch::Tensor& startTime) {
@@ -443,7 +443,7 @@ torch::Tensor ReinforcementLearningAgent::getAction() {
       auto workspace_bb_dims_acc = env->getWorkspaceBbDims().accessor<double, 1>();
       for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_origin[i] = workspace_bb_origin_acc[i];
       for (size_t i = 0; i < 3; i++) srv.request.workspace_bb_dims[i] = workspace_bb_dims_acc[i];
-      srv.request.elapsed_time = env->getElapsedTime().item().toDouble();
+      srv.request.elapsed_time = env->getElapsedTime().item().toFloat();
       if (!training_service_client->call(srv)) ROS_ERROR_STREAM_NAMED("control_force_provider/control_force_calculator/rl", "Failed to call training service.");
       return utils::createTensor(std::vector<double>(std::begin(srv.response.action), std::end(srv.response.action)));
     } else
@@ -467,7 +467,7 @@ void ReinforcementLearningAgent::getForceImpl(torch::Tensor& force) {
   if (now - last_calculation_ > interval_duration_) {
     if (train) {
       torch::Tensor goal_vector = env->getGoal() - env->getEePosition();
-      if (utils::norm(goal_vector).item().toDouble() < goal_reached_threshold_distance_) {
+      if (utils::norm(goal_vector).item().toFloat() < goal_reached_threshold_distance_) {
         if (initializing_episode) {
           episode_context_->startEpisode();
           setGoal(episode_context_->getGoal());

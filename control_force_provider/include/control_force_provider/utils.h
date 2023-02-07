@@ -28,7 +28,7 @@ class PythonError : Error {
 namespace utils {
 using namespace exceptions;
 
-torch::TensorOptions getTensorOptions(torch::DeviceType device = torch::kCPU, torch::ScalarType type = torch::kFloat64);
+torch::TensorOptions getTensorOptions(torch::DeviceType device = torch::kCPU, torch::ScalarType type = torch::kFloat32);
 
 Eigen::VectorXd tensorToVector(const torch::Tensor &tensor);
 

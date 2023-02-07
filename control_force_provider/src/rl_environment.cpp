@@ -9,7 +9,7 @@ using namespace control_force_provider;
 using namespace torch;
 
 namespace control_force_provider::backend {
-TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::array<double, 3> rcm, bool force_cpu)
+TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::array<float, 3> rcm, bool force_cpu, bool visualize)
     : ROSNode("cfp_rl_environment"), device_(force_cpu || !torch::hasCUDA() ? torch::kCPU : torch::kCUDA) {
   YAML::Node config = YAML::LoadFile(config_file);
   Time::setType<ManualTime>();
@@ -28,10 +28,10 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
   goal_reached_threshold_distance_ = utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0];
   ee_positions_ = episode_context_->getStart();
   is_terminal_ = torch::zeros({batch_size_, 1}, utils::getTensorOptions(device_, torch::kBool));
-  env_->setRCM(torch::from_blob(rcm.data(), {1, 3}, torch::kFloat64).clone());
+  env_->setRCM(torch::from_blob(rcm.data(), {1, 3}, torch::kFloat32).clone());
   if (utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]) env_->setOffset(env_->getRCM().clone());
   env_->update(ee_positions_);
-  if (utils::getConfigValue<bool>(config, "visualize")[0]) {
+  if (visualize) {
     visualizer_ = boost::make_shared<Visualizer>(node_handle_, env_, episode_context_, std::thread::hardware_concurrency());
   }
   spinner_.start();
@@ -39,28 +39,28 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
 
 std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
   std::map<std::string, torch::Tensor> out;
-  out["state"] = state_provider_->createState().to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["robot_position"] = env_->getEePosition().to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["robot_velocity"] = env_->getEeVelocity().to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["robot_rcm"] = env_->getRCM().to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["state"] = state_provider_->createState();
+  out["robot_position"] = env_->getEePosition();
+  out["robot_velocity"] = env_->getEeVelocity();
+  out["robot_rcm"] = env_->getRCM();
   out["obstacles_positions"] =
-      torch::cat(TensorList(&env_->getObPositions()[0], env_->getObPositions().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+      torch::cat(TensorList(&env_->getObPositions()[0], env_->getObPositions().size()), -1);
   out["obstacles_velocities"] =
-      torch::cat(TensorList(&env_->getObVelocities()[0], env_->getObVelocities().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["obstacles_rcms"] = torch::cat(TensorList(&env_->getObRCMs()[0], env_->getObRCMs().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+      torch::cat(TensorList(&env_->getObVelocities()[0], env_->getObVelocities().size()), -1);
+  out["obstacles_rcms"] = torch::cat(TensorList(&env_->getObRCMs()[0], env_->getObRCMs().size()), -1);
   out["points_on_l1"] =
-      torch::cat(TensorList(&env_->getPointsOnL1()[0], env_->getPointsOnL1().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+      torch::cat(TensorList(&env_->getPointsOnL1()[0], env_->getPointsOnL1().size()), -1);
   out["points_on_l2"] =
-      torch::cat(TensorList(&env_->getPointsOnL2()[0], env_->getPointsOnL2().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
+      torch::cat(TensorList(&env_->getPointsOnL2()[0], env_->getPointsOnL2().size()), -1);
   out["collision_distances"] =
       torch::cat(TensorList(&env_->getCollisionDistances()[0], env_->getCollisionDistances().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["goal"] = env_->getGoal().to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["is_terminal"] = is_terminal_.clone();
-  out["reached_goal"] = reached_goal_.clone();
-  out["collided"] = collided_.clone();
-  out["is_timeout"] = is_timeout_.clone();
-  out["workspace_bb_origin"] = env_->getWorkspaceBbOrigin().to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["workspace_bb_dims"] = env_->getWorkspaceBbDims().to(utils::getTensorOptions(device_, torch::kFloat32));
+  out["goal"] = env_->getGoal();
+  out["is_terminal"] = is_terminal_;
+  out["reached_goal"] = reached_goal_;
+  out["collided"] = collided_;
+  out["is_timeout"] = is_timeout_;
+  out["workspace_bb_origin"] = env_->getWorkspaceBbOrigin();
+  out["workspace_bb_dims"] = env_->getWorkspaceBbDims();
   return out;
 }
 
@@ -103,9 +103,10 @@ void TorchRLEnvironment::setCustomMarker(const std::string& key, const torch::Te
 
 PYBIND11_MODULE(native, module) {
   py::class_<TorchRLEnvironment>(module, "RLEnvironment")
-      .def(py::init<std::string, std::array<double, 3>>())
-      .def(py::init<std::string, std::array<double, 3>, bool>())
-      .def("observe", &TorchRLEnvironment::observe, py::return_value_policy::move)
+      .def(py::init<std::string, std::array<float, 3>>())
+      .def(py::init<std::string, std::array<float, 3>, bool>())
+      .def(py::init<std::string, std::array<float, 3>, bool, bool>())
+      .def("observe", &TorchRLEnvironment::observe)
       .def("set_custom_marker", &TorchRLEnvironment::setCustomMarker);
 }
 }  // namespace control_force_provider::backend

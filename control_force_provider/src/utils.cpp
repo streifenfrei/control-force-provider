@@ -26,12 +26,12 @@ torch::TensorOptions getTensorOptions(torch::DeviceType device, torch::ScalarTyp
 VectorXd tensorToVector(const torch::Tensor &tensor) {
   torch::Tensor tensor_ = tensor.cpu();
   if (tensor_.dim() > 1) {
-    auto acc = tensor_.accessor<double, 2>();
+    auto acc = tensor_.accessor<float, 2>();
     VectorXd out(tensor_.size(1));
     for (size_t i = 0; i < tensor_.size(1); i++) out[i] = acc[0][i];
     return out;
   } else {
-    auto acc = tensor_.accessor<double, 1>();
+    auto acc = tensor_.accessor<float, 1>();
     VectorXd out(tensor_.size(0));
     for (size_t i = 0; i < tensor_.size(0); i++) out[i] = acc[i];
     return out;
@@ -50,14 +50,14 @@ torch::Tensor vectorToTensor(const VectorXd &vector) {
 torch::Tensor createTensor(const std::vector<double> &values, unsigned int start, unsigned int end, torch::DeviceType device) {
   if (end == -1) end = values.size();
   torch::Tensor out = torch::empty(end - start, getTensorOptions());
-  auto acc = out.accessor<double, 1>();
+  auto acc = out.accessor<float, 1>();
   for (size_t i = 0; i < end - start; i++) {
-    acc[i] = values[start + i];
+    acc[i] = (float)values[start + i];
   }
   return out.unsqueeze(0).to(device);
 }
 
-torch::Tensor norm(const torch::Tensor &tensor) { return torch::linalg::vector_norm(tensor, 2, -1, true, torch::kFloat64); }
+torch::Tensor norm(const torch::Tensor &tensor) { return torch::linalg::vector_norm(tensor, 2, -1, true, torch::kFloat32); }
 
 void normalize(torch::Tensor &tensor) { tensor /= utils::norm(tensor); }
 

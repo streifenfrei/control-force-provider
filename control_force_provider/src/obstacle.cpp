@@ -64,7 +64,7 @@ WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string
     segments_.push_back(segment);
     torch::Scalar norm = utils::norm(segment).item();
     segments_normalized_.push_back(segment / norm);
-    double length = norm.toDouble();
+    double length = norm.toFloat();
     segments_lengths_.push_back(length);
     double duration = length / speed_;
     segments_durations_.push_back(duration);
@@ -111,7 +111,7 @@ torch::Tensor FramesObstacle::getPositionAt(torch::Tensor time) {
   do {
     auto current_iter = iter_++;
     if (iter_ == frames_.end()) {
-      if (current_iter->first < time.item().toDouble()) {  // reached end
+      if (current_iter->first < time.item().toFloat()) {  // reached end
         iter_--;
         return utils::vectorToTensor(current_iter->second.translation());
       }
@@ -121,12 +121,12 @@ torch::Tensor FramesObstacle::getPositionAt(torch::Tensor time) {
     auto next_iter = iter_;
     const double& t1 = current_iter->first;
     const double& t2 = next_iter->first;
-    if (t1 < time.item().toDouble() && t2 > time.item().toDouble()) {
+    if (t1 < time.item().toFloat() && t2 > time.item().toFloat()) {
       const Vector3d& p1 = current_iter->second.translation();
       const Vector3d& p2 = next_iter->second.translation();
       iter_--;
       // linear interpolation
-      return utils::vectorToTensor(p1 + (((time.item().toDouble() - t1) / (t2 - t1)) * (p2 - p1)));
+      return utils::vectorToTensor(p1 + (((time.item().toFloat() - t1) / (t2 - t1)) * (p2 - p1)));
     }
   } while (iter_ != start_iter);
 }
@@ -201,8 +201,8 @@ torch::Tensor ObstacleLoader::estimateRCM(const std::map<double, Eigen::Affine3d
         const Vector3d& a2 = p2.translation();
         Vector3d b2 = (p2 * Translation3d(0, 0, 1)).translation() - a2;
         utils::shortestLine(utils::vectorToTensor(a1), utils::vectorToTensor(b1), utils::vectorToTensor(a2), utils::vectorToTensor(b2), t, s);
-        if (!std::isnan(t.item().toDouble())) points.emplace_back(a1 + t.item().toDouble() * b1);
-        if (!std::isnan(s.item().toDouble())) points.emplace_back(a2 + s.item().toDouble() * b2);
+        if (!std::isnan(t.item().toFloat())) points.emplace_back(a1 + t.item().toFloat() * b1);
+        if (!std::isnan(s.item().toFloat())) points.emplace_back(a2 + s.item().toFloat() * b2);
       }
     }
   }

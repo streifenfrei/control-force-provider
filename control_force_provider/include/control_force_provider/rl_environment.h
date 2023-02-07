@@ -32,7 +32,7 @@ class TorchRLEnvironment : ROSNode {
   boost::shared_ptr<Visualizer> visualizer_;
 
  public:
-  TorchRLEnvironment(const std::string& config_file, std::array<double, 3> rcm, bool force_cpu = false);
+  TorchRLEnvironment(const std::string& config_file, std::array<float, 3> rcm, bool force_cpu = false, bool visualize = false);
   std::map<std::string, torch::Tensor> observe(const torch::Tensor& actions);
   void setCustomMarker(const std::string& key, const torch::Tensor& marker);
 };
