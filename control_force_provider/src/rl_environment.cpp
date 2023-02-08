@@ -40,27 +40,23 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
 std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
   std::map<std::string, torch::Tensor> out;
   out["state"] = state_provider_->createState();
-  out["robot_position"] = env_->getEePosition();
-  out["robot_velocity"] = env_->getEeVelocity();
-  out["robot_rcm"] = env_->getRCM();
-  out["obstacles_positions"] =
-      torch::cat(TensorList(&env_->getObPositions()[0], env_->getObPositions().size()), -1);
-  out["obstacles_velocities"] =
-      torch::cat(TensorList(&env_->getObVelocities()[0], env_->getObVelocities().size()), -1);
+  out["robot_position"] = env_->getEePosition().clone();
+  out["robot_velocity"] = env_->getEeVelocity().clone();
+  out["robot_rcm"] = env_->getRCM().clone();
+  out["obstacles_positions"] = torch::cat(TensorList(&env_->getObPositions()[0], env_->getObPositions().size()), -1);
+  out["obstacles_velocities"] = torch::cat(TensorList(&env_->getObVelocities()[0], env_->getObVelocities().size()), -1);
   out["obstacles_rcms"] = torch::cat(TensorList(&env_->getObRCMs()[0], env_->getObRCMs().size()), -1);
-  out["points_on_l1"] =
-      torch::cat(TensorList(&env_->getPointsOnL1()[0], env_->getPointsOnL1().size()), -1);
-  out["points_on_l2"] =
-      torch::cat(TensorList(&env_->getPointsOnL2()[0], env_->getPointsOnL2().size()), -1);
+  out["points_on_l1"] = torch::cat(TensorList(&env_->getPointsOnL1()[0], env_->getPointsOnL1().size()), -1);
+  out["points_on_l2"] = torch::cat(TensorList(&env_->getPointsOnL2()[0], env_->getPointsOnL2().size()), -1);
   out["collision_distances"] =
       torch::cat(TensorList(&env_->getCollisionDistances()[0], env_->getCollisionDistances().size()), -1).to(utils::getTensorOptions(device_, torch::kFloat32));
-  out["goal"] = env_->getGoal();
-  out["is_terminal"] = is_terminal_;
-  out["reached_goal"] = reached_goal_;
-  out["collided"] = collided_;
-  out["is_timeout"] = is_timeout_;
-  out["workspace_bb_origin"] = env_->getWorkspaceBbOrigin();
-  out["workspace_bb_dims"] = env_->getWorkspaceBbDims();
+  out["goal"] = env_->getGoal().clone();
+  out["is_terminal"] = is_terminal_.clone();
+  out["reached_goal"] = reached_goal_.clone();
+  out["collided"] = collided_.clone();
+  out["is_timeout"] = is_timeout_.clone();
+  out["workspace_bb_origin"] = env_->getWorkspaceBbOrigin().clone();
+  out["workspace_bb_dims"] = env_->getWorkspaceBbDims().clone();
   return out;
 }
 
