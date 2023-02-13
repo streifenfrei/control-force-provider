@@ -2,6 +2,7 @@
 <launch>
     <arg name="config" default="$(find control_force_provider)/default.config"/>
     <arg name="rviz" default="false"/>
+    <arg name="realtime" default="false"/>
     <arg name="remote_address" default=""/>
     <arg name="remote_user" default=""/>
     <arg name="remote_env" default=""/>
@@ -11,7 +12,7 @@
     <node pkg="control_force_provider"
           type="rl_training"
           name="rl_training"
-          args="$(eval '-v' if arg('rviz') else '')"
+          args="$(eval (' -v' if arg('rviz') else ' ') + (' -rt' if arg('realtime') else ' '))"
           respawn="false" output="screen"/>
 
     <machine name="remote"
