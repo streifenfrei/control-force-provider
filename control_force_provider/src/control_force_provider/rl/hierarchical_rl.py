@@ -95,9 +95,10 @@ class HierarchicalRLContext(RLContext):
                     else:
                         new_state_value[mask, :] = old_state_value[mask, :]
             if isinstance(self.agents[i], MonteCarloContext):
-                for j, episode in enumerate(self.agents[i].episode_buffer):
-                    if mask[j] and episode:
-                        episode.pop(-1)
+                if self.agents[i].ignore_stack:
+                    self.agents[i].ignore_stack[-1][mask, :] = True
+                self.agents[i].episode_lengths[mask, :] -= 1
+                self.agents[i].episode_lengths = torch.clamp_min(self.agents[i].episode_lengths, 0)
             # set next step
             mask = (reached_step.logical_or(self.last_terminal)).squeeze()
             next_position = torch.clamp(state_dict["robot_position"] + self.action, state_dict["workspace_bb_origin"], state_dict["workspace_bb_origin"] + state_dict["workspace_bb_dims"])
