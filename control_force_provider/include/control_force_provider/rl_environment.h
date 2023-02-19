@@ -30,6 +30,7 @@ class TorchRLEnvironment : ROSNode {
   ros::AsyncSpinner spinner_{1};
   std::map<std::string, torch::Tensor> getStateDict();
   boost::shared_ptr<Visualizer> visualizer_;
+  boost::shared_ptr<PotentialFieldMethod> pfm_;
 
  public:
   TorchRLEnvironment(const std::string& config_file, std::array<float, 3> rcm, bool force_cpu = false, bool visualize = false);

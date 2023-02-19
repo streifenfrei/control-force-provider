@@ -34,6 +34,8 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
   if (visualize) {
     visualizer_ = boost::make_shared<Visualizer>(node_handle_, env_, episode_context_, std::thread::hardware_concurrency());
   }
+  pfm_ = boost::make_shared<PotentialFieldMethod>(config, env_);
+  pfm_->repulsion_only_ = true;
   spinner_.start();
 }
 
@@ -67,10 +69,23 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
     ROS_WARN_STREAM_NAMED("RLEnvironment", "Some actions are NaN.");
     actions_copy = torch::where(actions_is_nan, 0, actions_copy);
   }
-  // env_->clipForce(actions_copy);
-  ee_positions_ += actions_copy * interval_duration_;
-  ee_positions_ =
-      ee_positions_.clamp(env_->getWorkspaceBbOrigin() + env_->getOffset(), env_->getWorkspaceBbOrigin() + env_->getOffset() + env_->getWorkspaceBbDims());
+  if (pfm_) {
+    torch::Tensor force = torch::empty_like(actions_copy);
+    for (size_t i = 0; i < interval_duration_; i++) {
+      pfm_->getForceImpl(force);
+      force += actions_copy;
+      env_->clipForce(force);
+      ee_positions_ += force;
+      env_->update(ee_positions_);
+      *time_ += 1e-3;
+    }
+  } else {
+    ee_positions_ += actions_copy * interval_duration_;
+    ee_positions_ =
+        ee_positions_.clamp(env_->getWorkspaceBbOrigin() + env_->getOffset(), env_->getWorkspaceBbOrigin() + env_->getOffset() + env_->getWorkspaceBbDims());
+    env_->update(ee_positions_);
+    *time_ += interval_duration_ * 1e-3;
+  }
   // check if episode ended by reaching goal ...
   reached_goal_ = utils::norm((env_->getGoal() + env_->getOffset() - ee_positions_)) < goal_reached_threshold_distance_;
   // ... or by collision
@@ -89,7 +104,6 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
   epoch_count_ = torch::where(is_terminal_, 0, epoch_count_ + 1);
   env_->setGoal(episode_context_->getGoal());
   env_->update(ee_positions_);
-  *time_ += interval_duration_ * 1e-3;
   return getStateDict();
 }
 

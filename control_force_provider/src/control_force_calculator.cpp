@@ -208,6 +208,7 @@ const std::vector<boost::shared_ptr<Obstacle>>& Environment::getObstacles() cons
 const boost::shared_ptr<ObstacleLoader>& Environment::getObstacleLoader() const { return obstacle_loader_; }
 
 ControlForceCalculator::ControlForceCalculator(const YAML::Node& config) : env(boost::make_shared<Environment>(config)) {}
+ControlForceCalculator::ControlForceCalculator(boost::shared_ptr<Environment> env_) : env(env_) {}
 
 void ControlForceCalculator::getForce(torch::Tensor& force, const torch::Tensor& ee_position_) {
   if (!goal_available_) setGoal(ee_position_ - env->getOffset());
@@ -222,6 +223,16 @@ void ControlForceCalculator::getForce(torch::Tensor& force, const torch::Tensor&
 
 PotentialFieldMethod::PotentialFieldMethod(const YAML::Node& config)
     : ControlForceCalculator(config),
+      repulsion_only_(false),
+      attraction_strength_(utils::getConfigValue<double>(config["pfm"], "attraction_strength")[0]),
+      attraction_distance_(utils::getConfigValue<double>(config["pfm"], "attraction_distance")[0]),
+      repulsion_strength_(utils::getConfigValue<double>(config["pfm"], "repulsion_strength")[0]),
+      repulsion_distance_(utils::getConfigValue<double>(config["pfm"], "repulsion_distance")[0]),
+      z_translation_strength_(utils::getConfigValue<double>(config["pfm"], "z_translation_strength")[0]),
+      min_rcm_distance_(utils::getConfigValue<double>(config["pfm"], "min_rcm_distance")[0]) {}
+PotentialFieldMethod::PotentialFieldMethod(const YAML::Node& config, boost::shared_ptr<Environment> env_)
+    : ControlForceCalculator(env_),
+      repulsion_only_(false),
       attraction_strength_(utils::getConfigValue<double>(config["pfm"], "attraction_strength")[0]),
       attraction_distance_(utils::getConfigValue<double>(config["pfm"], "attraction_distance")[0]),
       repulsion_strength_(utils::getConfigValue<double>(config["pfm"], "repulsion_strength")[0]),
@@ -231,48 +242,46 @@ PotentialFieldMethod::PotentialFieldMethod(const YAML::Node& config)
 
 void PotentialFieldMethod::getForceImpl(torch::Tensor& force) {
   // attractive vector
-  // TODO: replace with tensors fully
-  Vector3d attractive_vector = utils::tensorToVector(env->getGoal() - env->getEePosition());
-  double ee_to_goal_distance = attractive_vector.norm();
-  double smoothing_factor = 1;
-  if (ee_to_goal_distance > attraction_distance_) {
-    attractive_vector.normalize();  // use linear potential when far away from goal
-    smoothing_factor = 0.1;
-  }
+  torch::Tensor attractive_vector = env->getGoal() - env->getEePosition();
+  torch::Tensor ee_to_goal_distance = utils::norm(attractive_vector);
+  torch::Tensor is_linear_attraction = ee_to_goal_distance > attraction_distance_;
+  torch::Tensor smoothing_factor = torch::where(is_linear_attraction, 0.1, 1);
+  attractive_vector = torch::where(is_linear_attraction, attractive_vector / ee_to_goal_distance, attractive_vector);
   attractive_vector *= attraction_strength_ * smoothing_factor;
-
   // repulsive vector
-  Vector3d repulsive_vector = Vector3d::Zero();
-  Vector3d a1 = utils::tensorToVector(env->getRCM());
-  Vector3d b1 = utils::tensorToVector(env->getEePosition()) - a1;
-  double l1_length = b1.norm();
-  double min_l2_to_l1_distance = repulsion_distance_;
+  torch::Tensor repulsive_vector = torch::zeros_like(force);
+  const torch::Tensor& a1 = env->getRCM();
+  torch::Tensor b1 = env->getEePosition() - a1;
+  torch::Tensor l1_length = utils::norm(b1);
+  torch::Tensor min_l2_to_l1_distance = torch::full_like(l1_length, repulsion_distance_);
   for (size_t i = 0; i < env->getObPositions().size(); i++) {
-    double t = utils::tensorToVector(env->getPointsOnL1()[i] - env->getRCM()).norm() / l1_length;
-    Vector3d l2_to_l1 = utils::tensorToVector(env->getPointsOnL1()[i] - env->getPointsOnL2()[i]);
-    double l2_to_l1_distance = l2_to_l1.norm();
-    if (l2_to_l1_distance < repulsion_distance_) {
-      repulsive_vector += (repulsion_strength_ / l2_to_l1_distance - repulsion_strength_ / repulsion_distance_) / (l2_to_l1_distance * l2_to_l1_distance) *
-                          l2_to_l1.normalized() * t * l1_length;
-      if (l2_to_l1_distance < min_l2_to_l1_distance) min_l2_to_l1_distance = l2_to_l1_distance;
-    }
+    torch::Tensor t = utils::norm(env->getPointsOnL1()[i] - env->getRCM()) / l1_length;
+    torch::Tensor l2_to_l1 = env->getPointsOnL1()[i] - env->getPointsOnL2()[i];
+    torch::Tensor l2_to_l1_distance = utils::norm(l2_to_l1);
+    torch::Tensor is_repulsing = (l2_to_l1_distance < repulsion_distance_).expand({-1, 3});
+    repulsive_vector += torch::where(is_repulsing,
+                                     (repulsion_strength_ / l2_to_l1_distance - repulsion_strength_ / repulsion_distance_) /
+                                         (l2_to_l1_distance * l2_to_l1_distance) * l2_to_l1 / utils::norm(l2_to_l1) * t * l1_length,
+                                     0);
+    min_l2_to_l1_distance = torch::minimum(min_l2_to_l1_distance, l2_to_l1_distance);
   }
-  if (min_l2_to_l1_distance < repulsion_distance_) {
-    // avoid positive z-translation
-    Vector3d l1_new = utils::tensorToVector(env->getEePosition()) + repulsive_vector - a1;
-    double l1_new_length = l1_new.norm();
-    if (l1_length - l1_new_length < 0) {
-      l1_new *= l1_length / l1_new_length;
-      repulsive_vector = a1 + l1_new - utils::tensorToVector(env->getEePosition());
-    }
-    // add negative z-translation
-    repulsive_vector -= (z_translation_strength_ / min_l2_to_l1_distance - z_translation_strength_ / repulsion_distance_) /
-                        (min_l2_to_l1_distance * min_l2_to_l1_distance) * (b1 / l1_length);
-  }
-  if ((utils::tensorToVector(env->getEePosition()) + repulsive_vector - a1).norm() <
-      min_rcm_distance_)  // prevent pushing the end effector too close to the RCM
-    repulsive_vector = {0, 0, 0};
-  force = utils::vectorToTensor(attractive_vector + repulsive_vector);
+  torch::Tensor is_repulsing = min_l2_to_l1_distance < repulsion_distance_;
+  // avoid positive z-translation
+  torch::Tensor l1_new = env->getEePosition() + repulsive_vector - a1;
+  torch::Tensor l1_new_length = utils::norm(l1_new);
+  torch::Tensor positive_z_translation = l1_length - l1_new_length < 0;
+  l1_new *= torch::where(positive_z_translation, l1_length / l1_new_length, 1);
+  repulsive_vector = torch::where(is_repulsing.logical_and(positive_z_translation), a1 + l1_new - env->getEePosition(), repulsive_vector);
+
+  // add negative z-translation
+  repulsive_vector -= torch::where(is_repulsing,
+                                   (z_translation_strength_ / min_l2_to_l1_distance - z_translation_strength_ / repulsion_distance_) /
+                                       (min_l2_to_l1_distance * min_l2_to_l1_distance) * (b1 / l1_length),
+                                   0);
+  // prevent pushing the end effector too close to the RCM
+  repulsive_vector = torch::where((utils::norm((env->getEePosition() + repulsive_vector - a1)) < min_rcm_distance_).expand({-1, 3}), 0, repulsive_vector);
+  force = repulsive_vector;
+  if (!repulsion_only_) force += attractive_vector;
 }
 
 StateProvider::StatePopulator StateProvider::createPopulatorFromString(const Environment& env, const std::string& str) {

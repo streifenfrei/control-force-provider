@@ -115,12 +115,12 @@ class ControlForceCalculator {
  protected:
   boost::shared_ptr<Environment> env;
   friend class Visualizer;
-  friend class StateProvider;
 
   virtual void getForceImpl(torch::Tensor& force) = 0;
 
  public:
   ControlForceCalculator(const YAML::Node& config);
+  ControlForceCalculator(boost::shared_ptr<Environment> env_);
   void getForce(torch::Tensor& force, const torch::Tensor& ee_position_);
   [[nodiscard]] torch::Tensor getRCM() const { return env->getRCM(); }
   void setRCM(const torch::Tensor& rcm_) {
@@ -143,6 +143,7 @@ class ControlForceCalculator {
 
 class PotentialFieldMethod : public ControlForceCalculator {
  private:
+  bool repulsion_only_;
   const double attraction_strength_;
   const double attraction_distance_;
   const double repulsion_strength_;
@@ -150,12 +151,14 @@ class PotentialFieldMethod : public ControlForceCalculator {
   const double z_translation_strength_;
   const double min_rcm_distance_;
   friend class Visualizer;
+  friend class TorchRLEnvironment;
 
  protected:
   void getForceImpl(torch::Tensor& force) override;
 
  public:
   PotentialFieldMethod(const YAML::Node& config);
+  PotentialFieldMethod(const YAML::Node& config, boost::shared_ptr<Environment> env_);
   ~PotentialFieldMethod() override = default;
 };
 
