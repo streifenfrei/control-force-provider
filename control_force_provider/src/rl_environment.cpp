@@ -73,7 +73,7 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
     torch::Tensor force = torch::empty_like(actions_copy);
     pfm_->getForceImpl(force);
     actions_copy += force;
-    env_->update(ee_positions_);
+    env_->clipForce(actions_copy);
   }
   ee_positions_ += actions_copy * interval_duration_;
   ee_positions_ =
