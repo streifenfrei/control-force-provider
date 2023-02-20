@@ -71,6 +71,8 @@ class DQNContext(DiscreteRLContext):
         self.batch_load_time_accumulator = RLContext.Accumulator()
         self.update_future = None
         self.log_dict["loss"] = 0
+        self.her_reward = self.reward_function.rg + self.reward_function.motion_penalty
+        self.goal_state_index = self.state_augmenter.mapping[StatePartID.goal][0]
 
     def _get_state_dict_(self):
         return {"model_state_dict": self.dqn_policy.state_dict(),
@@ -88,6 +90,17 @@ class DQNContext(DiscreteRLContext):
             if self.last_state_dict is not None:
                 next_state = torch.where(state_dict["is_terminal"].expand(-1, state_dict["state"].size(-1)), torch.nan, state_dict["state"])
                 self.replay_buffer.push(self.last_state_dict["state"], state_dict["robot_velocity"], self.action_index, next_state, reward)
+                # hindsight experience replay
+                if state_dict["is_timeout"].any():
+                    her_ee_position = state_dict["robot_position"][state_dict["is_timeout"].expand([-1, 3])].view([-1, 3])
+                    her_goal = her_ee_position + self.state_augmenter.noise_dist.sample([her_ee_position.size(0)]).to(DEVICE)
+                    her_last_state = self.last_state_dict["state"][state_dict["is_timeout"].expand([-1, self.state_dim])].view([-1, self.state_dim]).clone()
+                    her_last_state[:, self.goal_state_index:self.goal_state_index + 3] = her_goal
+                    her_velocity = state_dict["robot_velocity"][state_dict["is_timeout"].expand([-1, 3])].view([-1, 3])
+                    her_action = self.action_index[state_dict["is_timeout"]].view([-1, 1])
+                    her_next_state = torch.full_like(her_last_state, torch.nan)
+                    her_reward = torch.full_like(her_action, self.her_reward)
+                    self.replay_buffer.push(her_last_state, her_velocity, her_action, her_next_state, her_reward)
 
             if len(self.replay_buffer) >= self.batch_size:
                 data_load_start = time.time()
