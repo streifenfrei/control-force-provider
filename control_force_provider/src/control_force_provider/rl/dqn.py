@@ -11,13 +11,17 @@ class ReplayBuffer:
         self.buffer = deque([], maxlen=capacity)
 
     def push(self, *args):
-        chunks = []
-        for arg in args:
-            chunks.append(arg.cpu().split(1))
-        for chunk in zip(*chunks):
-            transition = Transition(*chunk)
-            if not any(getattr(transition, field).isnan().any() for field in transition._fields if field not in ["next_state"]):
-                self.buffer.append(transition)
+        t = Transition(*args)
+        mask = torch.zeros_like(t.reward)
+        for field in t._fields:
+            if field not in ["next_state"]:
+                mask = getattr(t, field).isnan().any(-1, keepdims=True).logical_or(mask)
+        mask = mask.logical_not()
+        args = []
+        for v in t:
+            args.append(v[mask.expand([-1, v.size(-1)])].view([-1, v.size(-1)]).cpu().split(1))
+        for chunk in zip(*args):
+            self.buffer.append(Transition(*chunk))
 
     def sample(self, batch_size):
         return random.sample(self.buffer, batch_size)
