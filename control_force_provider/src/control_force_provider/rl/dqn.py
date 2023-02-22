@@ -111,7 +111,6 @@ class DQNContext(DiscreteRLContext):
                 next_state_batch = torch.cat(batch.next_state).to(DEVICE)
                 is_terminal = next_state_batch.isnan().any(-1, keepdims=True)
                 next_state_batch = torch.where(next_state_batch.isnan(), 0, next_state_batch)
-                self.batch_load_time_accumulator.update_state(torch.tensor(time.time() - data_load_start, device=DEVICE))
                 self.optimizer.zero_grad()
                 q = self.dqn_policy(state_batch).gather(1, action_batch)
                 with torch.no_grad():
@@ -127,12 +126,9 @@ class DQNContext(DiscreteRLContext):
                     loss.backward()
                     clip_grad_norm_(self.dqn_policy.parameters(), 1)
                     self.optimizer.step()
+                    self.total_loss_accumulator.update_state(loss.detach().mean().cpu())
                     self.log_dict["loss"] += self.total_loss_accumulator.get_value().item()
-                    self.summary_writer.add_scalar("loss/total", self.total_loss_accumulator.get_value(), self.epoch)
-                    self.summary_writer.add_scalar("profiling/batch_load_time", self.batch_load_time_accumulator.get_value(), self.epoch)
-                    self.rl_loss_accumulator.reset()
                     self.total_loss_accumulator.reset()
-                    self.batch_load_time_accumulator.reset()
                 else:
                     rospy.logwarn(f"NaNs in DQN loss. Epoch {self.epoch}")
 
