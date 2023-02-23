@@ -37,6 +37,7 @@ Environment::Environment(const YAML::Node& config, int batch_size, torch::Device
       rcm_(torch::zeros(3, utils::getTensorOptions(device))),
       goal_(torch::zeros({batch_size, 3}, utils::getTensorOptions(device))),
       start_time_(torch::zeros({batch_size, 1}, utils::getTensorOptions(device))),
+      last_update_(0),
       elapsed_time_(torch::zeros({batch_size, 1}, utils::getTensorOptions(device))),
       workspace_bb_origin_(utils::createTensor(utils::getConfigValue<double>(config, "workspace_bb"), 0, 3, device)),
       workspace_bb_dims_(utils::createTensor(utils::getConfigValue<double>(config, "workspace_bb"), 3, 6, device)),
@@ -72,6 +73,13 @@ Environment::Environment(const YAML::Node& config, int batch_size, torch::Device
 
 void Environment::update(const torch::Tensor& ee_position) {
   torch::Tensor ee_position_off = ee_position.device() == device_ ? ee_position - offset_ : ee_position.to(device_) - offset_;
+  double now = Time::now();
+  double time_since_last_update = now - last_update_;
+  if (time_since_last_update > 0) {
+    boost::lock_guard<boost::shared_mutex> lock(ee_vel_mtx);
+    ee_velocity_ = (ee_position_off - ee_position_) / time_since_last_update;
+  }
+  last_update_ = now;
   {
     boost::lock_guard<boost::shared_mutex> lock(ee_pos_mtx);
     ee_position_ = ee_position_off;
@@ -80,7 +88,7 @@ void Environment::update(const torch::Tensor& ee_position) {
     boost::lock_guard<boost::shared_mutex> lock(ee_rot_mtx);
     ee_rotation_ = utils::zRotation(rcm_ - offset_, ee_position_);
   }
-  elapsed_time_ = Time::now() - start_time_;
+  elapsed_time_ = now - start_time_;
   for (size_t i = 0; i < obstacles_.size(); i++) {
     torch::Tensor new_ob_position = obstacles_[i]->getPosition();
     new_ob_position -= offset_;

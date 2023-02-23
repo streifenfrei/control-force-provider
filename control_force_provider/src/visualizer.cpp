@@ -108,7 +108,7 @@ void Visualizer::callback(const ros::TimerEvent& event) {
       geometry_msgs::Point ee_position_msg;
       tf::pointEigenToMsg(ee_position_eigen, ee_position_msg);
       geometry_msgs::Point target_msg;
-      double scale = std::max(ee_velocity_eigen.norm() / environment_->getMaxForce() * 0.15, 0.05);
+      double scale = std::max(ee_velocity_eigen.norm() / environment_->getMaxForce() * 5e-5, 0.05);
       tf::pointEigenToMsg(ee_position_eigen + ee_velocity_eigen.normalized() * scale, target_msg);
       boost::lock_guard<boost::mutex> lock(visualizer_mtx_);
       visual_tools_.publishLine(rcm_eigen, ee_position_eigen, rviz_visual_tools::PURPLE);

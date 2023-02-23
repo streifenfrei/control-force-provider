@@ -56,6 +56,7 @@ class Environment {
   const torch::Tensor workspace_bb_dims_;
   const torch::Scalar max_force_;
   torch::Tensor start_time_;
+  double last_update_;
   torch::Tensor elapsed_time_;
   std::vector<boost::shared_ptr<Obstacle>> obstacles_;
   boost::shared_ptr<ObstacleLoader> obstacle_loader_;
