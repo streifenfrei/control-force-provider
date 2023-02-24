@@ -125,8 +125,8 @@ class ActionSpace:
         theta_step_num = 2 * grid_order
         phi_step_num = 4 * grid_order
         self.magnitude_step = max_force / magnitude_order
-        self.action_vectors = [torch.zeros([1, 3], device=DEVICE)]
-        self.action_vectors_normalized = [None]
+        self.action_vectors = []
+        self.action_vectors_normalized = []
         for i in range(theta_step_num + 1):
             theta = i * angle_step
             for j in range(phi_step_num):
@@ -149,7 +149,7 @@ class ActionSpace:
         goal_vector /= norm + EPSILON
         min_angle = torch.full([goal_vector.size(0), 1], torch.inf, device=DEVICE)
         self.goal_vectors_index_start = torch.empty_like(min_angle, dtype=torch.int64)
-        for i in range(1, len(self.action_vectors), len(self.goal_vectors)):
+        for i in range(0, len(self.action_vectors), len(self.goal_vectors)):
             angle = torch.acos(torch.linalg.vecdot(goal_vector, self.action_vectors_normalized[i])).unsqueeze(-1)
             mask = angle < min_angle
             min_angle = torch.where(mask, angle, min_angle)
@@ -373,15 +373,15 @@ class RLContext(ABC):
 
 
 class DiscreteRLContext(RLContext):
-    def __init__(self, grid_order, magnitude_order, exploration_epsilon, exploration_min_goal_p, exploration_max_goal_p, exploration_decay, **kwargs):
+    def __init__(self, grid_order, magnitude_order, exploration_epsilon, exploration_sigma, exploration_decay, **kwargs):
         super().__init__(**kwargs)
         self.action_space = ActionSpace(grid_order, magnitude_order, self.max_force)
+        self.action_vectors = torch.stack(self.action_space.action_vectors_normalized).permute(1, 2, 0)
         self.exploration_probs = None
         self.exploration_epsilon = exploration_epsilon
-        self.exploration_min_goal_p = max((1 / (len(self.action_space) - 1)) * len(self.action_space.goal_vectors), exploration_min_goal_p)
-        self.exploration_max_goal_p = exploration_max_goal_p
-        self.exploration_goal_p_range = exploration_max_goal_p - self.exploration_min_goal_p
         self.exploration_decay = exploration_decay
+        self.exploration_sigma = exploration_sigma
+        self.exploration_gauss_factor = 1 / (self.exploration_sigma * math.sqrt(2 * math.pi))
         self.one_minus_exploration_decay = 1 - self.exploration_decay
         self.action_index = None
         self.max_distance = None
@@ -411,22 +411,20 @@ class DiscreteRLContext(RLContext):
 
     def _post_update(self, state_dict):
         if self.train:
-            goal_vector = state_dict["goal"] - state_dict["robot_position"]
-            exploration_goal_p = (torch.linalg.vector_norm(goal_vector, dim=-1, keepdims=True) / self.max_distance) * self.exploration_goal_p_range + self.exploration_min_goal_p
-            exploration_goal_p = torch.minimum(exploration_goal_p, torch.tensor(self.exploration_max_goal_p))
-            self.action_space.update_goal_vector(goal_vector)
+            self.action_space.update_goal_vector(state_dict["goal"] - state_dict["robot_position"])
             # explore
-            self.exploration_probs = torch.full([self.robot_batch, len(self.action_space)], torch.nan, device=DEVICE)
-            n = torch.zeros_like(self.action_index)
-            for i in range(len(self.action_space.goal_vectors)):
-                n = torch.where(self.action_space.goal_vectors_index_start + i == self.action_index, n, n + 1)
-            for i in range(len(self.action_space.goal_vectors)):
-                self.exploration_probs = self.exploration_probs.scatter(-1, self.action_space.goal_vectors_index_start + i, self.exploration_epsilon * exploration_goal_p / n)
+            # exploration probs depend on the angle to the current velocity (normal distribution)
+            velocities_normalized = state_dict["robot_velocity"] / (torch.linalg.vector_norm(state_dict["robot_velocity"], dim=-1, keepdim=True) + EPSILON)
+            angles = torch.matmul(velocities_normalized.view([self.robot_batch, 1, 3]), self.action_vectors)
+            angles = torch.acos(torch.clamp(angles, -1, 1)).squeeze()
+            self.exploration_probs = self.exploration_gauss_factor * torch.exp(-0.5 * ((angles / self.exploration_sigma) ** 2))
+            self.exploration_probs[self.exploration_probs.isnan()] = EPSILON  # what to do with 0 velocities?
+            # normalize
+            self.exploration_probs = self.exploration_probs.scatter(-1, self.action_index, 0)
+            self.exploration_probs /= (self.exploration_probs.sum(-1, keepdim=True) + EPSILON)
+            # insert no-exploration prob
+            self.exploration_probs *= self.exploration_epsilon
             self.exploration_probs = self.exploration_probs.scatter(-1, self.action_index, 1 - self.exploration_epsilon)
-            mask = self.exploration_probs.isnan()
-            n = mask.sum(-1, keepdims=True)
-            factor = torch.where(n == len(self.action_space) - 1, 1, 1 - exploration_goal_p)
-            self.exploration_probs = torch.where(mask, self.exploration_epsilon * factor / n, self.exploration_probs)
             successes = sum(self.successes)
             if successes > 0 and len(self.successes) == self.successes.maxlen:
                 success_ratio = sum(self.episodes_passed) / successes
