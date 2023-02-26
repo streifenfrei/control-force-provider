@@ -255,6 +255,8 @@ class RLContext(ABC):
         self.acc_reward = torch.zeros([robot_batch, 1], device=DEVICE)
         self.log = log
         self.train = train
+        self.her_reward = self.reward_function.rg + self.reward_function.motion_penalty
+        self.goal_state_index = self.state_augmenter.mapping[StatePartID.goal][0]
 
     def __del__(self):
         self.summary_writer.flush()
@@ -425,13 +427,14 @@ class DiscreteRLContext(RLContext):
             # insert no-exploration prob
             self.exploration_probs *= self.exploration_epsilon
             self.exploration_probs = self.exploration_probs.scatter(-1, self.action_index, 1 - self.exploration_epsilon)
-            successes = sum(self.successes)
-            if successes > 0 and len(self.successes) == self.successes.maxlen:
-                success_ratio = sum(self.episodes_passed) / successes
-                if success_ratio >= 0.9:
-                    self.exploration_epsilon *= self.exploration_decay
-                # else:
-                # self.exploration_epsilon = self.exploration_epsilon * self.exploration_decay + self.one_minus_exploration_decay
+            self.exploration_epsilon *= self.exploration_decay
+            # successes = sum(self.successes)
+            # if successes > 0 and len(self.successes) == self.successes.maxlen:
+            #    success_ratio = sum(self.episodes_passed) / successes
+            #    if success_ratio >= 0.9:
+            #        self.exploration_epsilon *= self.exploration_decay
+            #    # else:
+            #    # self.exploration_epsilon = self.exploration_epsilon * self.exploration_decay + self.one_minus_exploration_decay
             self.action_index = torch.distributions.Categorical(self.exploration_probs).sample().unsqueeze(-1)
         # get actual action vector
         self.action = self.action_space.get_action(self.action_index)

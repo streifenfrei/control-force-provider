@@ -71,8 +71,6 @@ class DQNContext(DiscreteRLContext):
         self.batch_load_time_accumulator = RLContext.Accumulator()
         self.update_future = None
         self.log_dict["loss"] = 0
-        self.her_reward = self.reward_function.rg + self.reward_function.motion_penalty
-        self.goal_state_index = self.state_augmenter.mapping[StatePartID.goal][0]
 
     def _get_state_dict_(self):
         return {"model_state_dict": self.dqn_policy.state_dict(),

@@ -1,9 +1,7 @@
-import random
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 from .basics import *
 from .dqn import DQN
-from torch.profiler import record_function
 
 MonteCarloUpdateTuple = namedtuple('MonteCarloUpdateTuple', ('state', 'action', 'return_', 'weight'))
 
@@ -22,9 +20,11 @@ class MonteCarloContext(DiscreteRLContext):
         self.log_dict["loss"] = 0
         self.state_stack = []
         self.actions_stack = []
+        self.ee_position_stack = []
         self.weights_stack = []
         self.rewards_stack = []
         self.is_terminal_stack = []
+        self.her_terminal_stack = []
         self.ignore_stack = []
         self.abort_stack = []
         self.episode_lengths = torch.zeros([self.robot_batch, 1], device=DEVICE)
@@ -52,6 +52,11 @@ class MonteCarloContext(DiscreteRLContext):
                 self.episode_lengths += 1
                 if self.soft_is < EPSILON:
                     self.episode_lengths = torch.where(was_exploring, 0, self.episode_lengths)
+                # hindsight experience replay
+                self.ee_position_stack.append(state_dict["robot_position"])
+                self.her_terminal_stack.append(state_dict["is_timeout"])
+                self.episode_lengths *= torch.where(state_dict["is_timeout"], 2, 1)
+                # update other buffers
                 self.buffer_size += torch.masked_select(self.episode_lengths, state_dict["is_terminal"]).sum()
                 self.episode_lengths = torch.where(state_dict["is_terminal"], 0, self.episode_lengths)
                 self.is_terminal_stack.append(state_dict["is_terminal"])
@@ -62,14 +67,18 @@ class MonteCarloContext(DiscreteRLContext):
                 time_steps = len(self.actions_stack)
                 states = torch.stack(self.state_stack)
                 actions = torch.stack(self.actions_stack)
+                her_goals = torch.stack(self.ee_position_stack)
                 weights = torch.stack(self.weights_stack)
                 rewards = torch.stack(self.rewards_stack)
                 is_terminal = torch.stack(self.is_terminal_stack)
+                her_terminal = torch.stack(self.her_terminal_stack)
                 no_ignore = torch.stack(self.ignore_stack).logical_not()
                 no_abort = torch.stack(self.abort_stack).logical_not()
                 accumulated_weights = torch.ones_like(weights)
                 returns = torch.zeros_like(rewards)
+                her_returns = torch.zeros_like(rewards)
                 is_valid = torch.zeros_like(is_terminal)
+                her_is_valid = torch.zeros_like(is_terminal)
                 for i in reversed(range(time_steps)):
                     i_plus_one = min(i + 1, time_steps - 1)
                     accumulated_weights[i, :, :] = torch.where(no_ignore[i, :, :],
@@ -78,10 +87,23 @@ class MonteCarloContext(DiscreteRLContext):
                     returns[i, :, :] = torch.where(no_ignore[i, :, :],
                                                    torch.where(is_terminal[i, :, :], rewards[i, :, :], self.discount_factor * returns[i_plus_one, :, :] + rewards[i, :, :]),
                                                    returns[i, :, :])
+                    her_returns[i, :, :] = torch.where(no_ignore[i, :, :],
+                                                       torch.where(her_terminal[i, :, :], self.her_reward, self.discount_factor * her_returns[i_plus_one, :, :] + rewards[i, :, :]),
+                                                       her_returns[i, :, :])
                     is_valid[i, :, :] = is_valid[i_plus_one, :, :].logical_or(is_terminal[i, :, :]).logical_and(no_abort[i, :, :])
+                    her_is_valid[i, :, :] = (her_is_valid[i_plus_one, :, :].logical_and(is_terminal[i, :, :].logical_not())).logical_or(her_terminal[i, :, :])
+                    her_goals[i, :, :] = torch.where(her_terminal[i, :, :], her_goals[i, :, :], her_goals[i_plus_one, :, :])
                 is_valid = is_valid.logical_and(rewards.isnan().logical_not()).logical_and(no_ignore)
                 if self.soft_is < EPSILON:
                     is_valid = is_valid.logical_and(weights > 0)
+                her_is_valid = her_is_valid.logical_and(is_valid)
+                her_states = states.clone()
+                her_states[:, :, self.goal_state_index:self.goal_state_index + 3] = her_goals
+                # stack HER batch on top
+                states = torch.stack([states, her_states])
+                actions = torch.stack([actions, actions])
+                returns = torch.stack([returns, her_returns])
+                is_valid = torch.stack([is_valid, her_is_valid])
                 batch_size = is_valid.sum()
                 # create batch
                 state_batch = self.state_augmenter(torch.masked_select(states, is_valid).reshape([batch_size, states.size(-1)]).contiguous())
@@ -107,9 +129,11 @@ class MonteCarloContext(DiscreteRLContext):
                 self.buffer_size = 0
                 self.state_stack = []
                 self.actions_stack = []
+                self.ee_position_stack = []
                 self.weights_stack = []
                 self.rewards_stack = []
                 self.is_terminal_stack = []
+                self.her_terminal_stack = []
                 self.ignore_stack = []
                 self.abort_stack = []
                 self.episode_lengths = torch.zeros([self.robot_batch, 1], device=DEVICE)
