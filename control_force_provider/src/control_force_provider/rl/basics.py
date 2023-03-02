@@ -210,6 +210,7 @@ class RLContext(ABC):
                  robot_batch,
                  max_force,
                  reward_function,
+                 goal_reached_threshold_distance,
                  state_augmenter,
                  output_directory,
                  save_rate,
@@ -241,6 +242,7 @@ class RLContext(ABC):
         self.total_episode_count = 0
         self.last_episode_count = 0
         self.goal = None
+        self.goal_reached_threshold_distance = goal_reached_threshold_distance
         self.interval_duration = interval_duration
         self.stop_update = False
         self.state_batch = None
@@ -256,6 +258,7 @@ class RLContext(ABC):
         self.log = log
         self.train = train
         self.her_reward = self.reward_function.rg + self.reward_function.motion_penalty
+        self.her_noise_dist = self.noise_dist = torch.distributions.multivariate_normal.MultivariateNormal(torch.zeros(3), torch.eye(3) * 1e-7)
         self.goal_state_index = self.state_augmenter.mapping[StatePartID.goal][0]
 
     def __del__(self):
@@ -371,7 +374,7 @@ class RLContext(ABC):
 
     def warn(self, string):
         if self.log:
-            rospy.warn(string)
+            rospy.logwarn(string)
 
 
 class DiscreteRLContext(RLContext):
@@ -420,10 +423,10 @@ class DiscreteRLContext(RLContext):
             angles = torch.matmul(velocities_normalized.view([self.robot_batch, 1, 3]), self.action_vectors)
             angles = torch.acos(torch.clamp(angles, -1, 1)).squeeze()
             self.exploration_probs = self.exploration_gauss_factor * torch.exp(-0.5 * ((angles / self.exploration_sigma) ** 2))
-            self.exploration_probs[self.exploration_probs.isnan()] = EPSILON  # what to do with 0 velocities?
+            self.exploration_probs[self.exploration_probs.isnan()] = 0.01  # what to do with 0 velocities?
             # normalize
             self.exploration_probs = self.exploration_probs.scatter(-1, self.action_index, 0)
-            self.exploration_probs /= (self.exploration_probs.sum(-1, keepdim=True) + EPSILON)
+            self.exploration_probs /= (self.exploration_probs.sum(-1, keepdim=True))
             # insert no-exploration prob
             self.exploration_probs *= self.exploration_epsilon
             self.exploration_probs = self.exploration_probs.scatter(-1, self.action_index, 1 - self.exploration_epsilon)

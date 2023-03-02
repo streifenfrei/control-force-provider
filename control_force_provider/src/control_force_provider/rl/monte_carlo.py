@@ -98,7 +98,11 @@ class MonteCarloContext(DiscreteRLContext):
                     is_valid = is_valid.logical_and(weights > 0)
                 her_is_valid = her_is_valid.logical_and(is_valid)
                 her_states = states.clone()
-                her_states[:, :, self.goal_state_index:self.goal_state_index + 3] = her_goals
+                noise = self.her_noise_dist.sample([her_goals.size(1)]).to(DEVICE)
+                noise_magnitudes = torch.linalg.vector_norm(noise, dim=-1, keepdims=True)
+                noise /= noise_magnitudes
+                noise *= torch.minimum(noise_magnitudes, torch.tensor(self.goal_reached_threshold_distance))
+                her_states[:, :, self.goal_state_index:self.goal_state_index + 3] = her_goals + noise.unsqueeze(0)
                 # stack HER batch on top
                 states = torch.stack([states, her_states])
                 actions = torch.stack([actions, actions])
@@ -125,7 +129,11 @@ class MonteCarloContext(DiscreteRLContext):
                     self.log_dict["loss"] += self.loss_accumulator.get_value().item()
                     self.loss_accumulator.reset()
                 else:
-                    self.warn(f"NaNs in MC loss. Epoch {self.epoch}")
+                    self.warn(f"NaNs in MC loss. Epoch {self.epoch}. \n"
+                              f"State batch has NaNs: {state_batch.isnan().any()}\n"
+                              f"Action batch has NaNs: {action_batch.isnan().any()}\n"
+                              f"Return batch has NaNs: {return_batch.isnan().any()}\n"
+                              f"Weight batch has NaNs: {weight_batch.isnan().any()}")
                 self.buffer_size = 0
                 self.state_stack = []
                 self.actions_stack = []

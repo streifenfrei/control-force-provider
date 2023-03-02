@@ -91,7 +91,7 @@ class DQNContext(DiscreteRLContext):
                 # hindsight experience replay
                 if state_dict["is_timeout"].any():
                     her_ee_position = state_dict["robot_position"][state_dict["is_timeout"].expand([-1, 3])].view([-1, 3])
-                    her_goal = her_ee_position + self.state_augmenter.noise_dist.sample([her_ee_position.size(0)]).to(DEVICE)
+                    her_goal = her_ee_position + self.her_noise_dist.sample([her_ee_position.size(0)]).to(DEVICE)
                     her_last_state = self.last_state_dict["state"][state_dict["is_timeout"].expand([-1, self.state_dim])].view([-1, self.state_dim]).clone()
                     her_last_state[:, self.goal_state_index:self.goal_state_index + 3] = her_goal
                     her_velocity = state_dict["robot_velocity"][state_dict["is_timeout"].expand([-1, 3])].view([-1, 3])
