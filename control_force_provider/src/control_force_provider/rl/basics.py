@@ -251,10 +251,12 @@ class RLContext(ABC):
         self.reward_batch = None
         self.successes = deque([], 2 * self.log_interval)
         self.collisions = deque([], 2 * self.log_interval)
+        self.episodes_lengths = deque([], 2 * self.log_interval)
         self.episodes_passed = deque([], 2 * self.log_interval)
         self.timeouts = deque([], 2 * self.log_interval)
         self.returns = []
         self.acc_reward = torch.zeros([robot_batch, 1], device=DEVICE)
+        self.acc_lengths = torch.zeros([robot_batch, 1], device=DEVICE)
         self.log = log
         self.train = train
         self.her_reward = self.reward_function.rg + self.reward_function.motion_penalty
@@ -344,10 +346,13 @@ class RLContext(ABC):
         self.last_state_dict = self._copy_state_dict(state_dict)
         # log
         if self.epoch > 0:
+            self.acc_lengths += 1
             self.successes.append(state_dict["reached_goal"].sum().item())
             self.collisions.append(state_dict["collided"].sum().item())
             self.timeouts.append(state_dict["is_timeout"].sum().item())
             self.episodes_passed.append(state_dict["is_terminal"].sum().item())
+            self.episodes_lengths.append(self.acc_lengths[state_dict["is_terminal"]].sum().item())
+            self.acc_lengths = torch.where(state_dict["is_terminal"], 0, self.acc_lengths)
             if self.epoch % self.log_interval == 0:
                 episodes_passed = sum(list(self.episodes_passed)[-self.log_interval:])
                 self.summary_writer.add_scalar("metrics/success_ratio", sum(list(self.successes)[-self.log_interval:]) / (episodes_passed + EPSILON), self.epoch)
@@ -356,6 +361,9 @@ class RLContext(ABC):
                 mean_return = sum(self.returns) / (len(self.returns) + EPSILON)
                 self.summary_writer.add_scalar("return", mean_return, self.epoch)
                 self.returns = []
+                episodes_lengths = list(self.episodes_lengths)[-self.log_interval:]
+                self.summary_writer.add_scalar("metrics/max_episode_length", max(episodes_lengths), self.epoch)
+                self.summary_writer.add_scalar("metrics/mean_episode_length", sum(episodes_lengths) / (episodes_passed + EPSILON), self.epoch)
                 for key in self.episode_accumulators_mean:
                     self.summary_writer.add_scalar(key, sum(self.episode_accumulators_mean[key] / len(self.episode_accumulators_mean), self.epoch))
                 if self.log:
