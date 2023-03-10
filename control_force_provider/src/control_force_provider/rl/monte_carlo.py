@@ -110,7 +110,7 @@ class MonteCarloContext(DiscreteRLContext):
                 is_valid = torch.stack([is_valid, her_is_valid])
                 batch_size = is_valid.sum()
                 # create batch
-                state_batch = self.state_augmenter(torch.masked_select(states, is_valid).reshape([batch_size, states.size(-1)]).contiguous())
+                state_batch = torch.masked_select(states, is_valid).reshape([batch_size, states.size(-1)]).contiguous()
                 action_batch = torch.masked_select(actions, is_valid).reshape([batch_size, 1]).contiguous()
                 return_batch = torch.masked_select(returns, is_valid).reshape([batch_size, 1]).contiguous()
                 weight_batch = (1 - self.soft_is) * torch.masked_select(accumulated_weights, is_valid).reshape([batch_size, 1]).contiguous() + self.soft_is
@@ -147,6 +147,18 @@ class MonteCarloContext(DiscreteRLContext):
                 self.episode_lengths = torch.zeros([self.robot_batch, 1], device=DEVICE)
                 if self.epoch % self.log_interval == 0:
                     self.summary_writer.add_scalar("soft_is", self.soft_is, self.epoch)
+        else:
+            self.buffer_size = 0
+            self.state_stack = []
+            self.actions_stack = []
+            self.ee_position_stack = []
+            self.weights_stack = []
+            self.rewards_stack = []
+            self.is_terminal_stack = []
+            self.her_terminal_stack = []
+            self.ignore_stack = []
+            self.abort_stack = []
+            self.episode_lengths = torch.zeros([self.robot_batch, 1], device=DEVICE)
         self.dqn.eval()
         with torch.no_grad():
             self.action_index = self.dqn(state_dict["state"]).max(-1)[1].unsqueeze(-1)
