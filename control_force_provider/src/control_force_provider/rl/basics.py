@@ -98,21 +98,22 @@ class RewardFunction:
         if last_state_dict is None:
             out = torch.full([goal.size(0), 1], torch.nan, device=DEVICE)
             return out, out, out, out
-        robot_position = state_dict["robot_position"]
+        #robot_position = state_dict["robot_position"]
         # last_robot_position = last_state_dict["robot_position"]
-        collision_distances = (state_dict["collision_distances"][:, x:x + 1] for x in range(state_dict["collision_distances"].size(-1)))
-        distance_to_goal = torch.linalg.norm(goal - robot_position, dim=-1).unsqueeze(-1)
+        #collision_distances = (state_dict["collision_distances"][:, x:x + 1] for x in range(state_dict["collision_distances"].size(-1)))
+        #distance_to_goal = torch.linalg.norm(goal - robot_position, dim=-1).unsqueeze(-1)
         # motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
         collision_penalty = torch.where(mask, 0, torch.nan)
+        collision_penalty -= torch.where(state_dict["is_collided"], self.max_penalty, 0)
         motion_reward = torch.where(mask, torch.full_like(collision_penalty, self.motion_penalty), torch.nan)
-        for collision_distance in collision_distances:
-            collision_penalty = -torch.where(collision_distance.isnan(), 0, collision_penalty + (self.dc / (collision_distance + EPSILON)) ** self.mc)
-        collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
+        #for collision_distance in collision_distances:
+        #    collision_penalty = -torch.where(collision_distance.isnan(), 0, collision_penalty + (self.dc / (collision_distance + EPSILON)) ** self.mc)
+        #collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
         goal_reward = torch.where(mask, torch.where(state_dict["reached_goal"], self.rg, torch.zeros_like(collision_penalty)), torch.nan)
-        if self.max_distance is None:
-            self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
-        timeout_penalty = self.min_timeout_penalty + ((distance_to_goal / self.max_distance) * self.timeout_penalty_range)
-        goal_reward = torch.where(state_dict["is_timeout"], timeout_penalty, goal_reward)
+        #if self.max_distance is None:
+        #    self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
+        #timeout_penalty = self.min_timeout_penalty + ((distance_to_goal / self.max_distance) * self.timeout_penalty_range)
+        #goal_reward = torch.where(state_dict["reached_goal"], goal_reward, 0)
         total_reward = motion_reward + collision_penalty + goal_reward  # + timeout_penalty
         return total_reward, motion_reward, collision_penalty, goal_reward
 
