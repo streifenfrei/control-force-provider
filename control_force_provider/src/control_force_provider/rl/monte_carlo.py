@@ -104,10 +104,11 @@ class MonteCarloContext(DiscreteRLContext):
                 noise *= torch.minimum(noise_magnitudes, torch.tensor(self.goal_reached_threshold_distance))
                 her_states[:, :, self.goal_state_index:self.goal_state_index + 3] = her_goals + noise.unsqueeze(0)
                 # stack HER batch on top
-                states = torch.stack([states, her_states])
-                actions = torch.stack([actions, actions])
-                returns = torch.stack([returns, her_returns])
-                is_valid = torch.stack([is_valid, her_is_valid])
+                states = torch.cat([states, her_states])
+                actions = torch.cat([actions, actions])
+                returns = torch.cat([returns, her_returns])
+                is_valid = torch.cat([is_valid, her_is_valid])
+                accumulated_weights = torch.cat([accumulated_weights, accumulated_weights])
                 batch_size = is_valid.sum()
                 # create batch
                 state_batch = torch.masked_select(states, is_valid).reshape([batch_size, states.size(-1)]).contiguous()

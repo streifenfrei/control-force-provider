@@ -104,7 +104,7 @@ class RewardFunction:
         #distance_to_goal = torch.linalg.norm(goal - robot_position, dim=-1).unsqueeze(-1)
         # motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
         collision_penalty = torch.where(mask, 0, torch.nan)
-        collision_penalty -= torch.where(state_dict["is_collided"], self.max_penalty, 0)
+        collision_penalty -= torch.where(state_dict["collided"], self.max_penalty, 0)
         motion_reward = torch.where(mask, torch.full_like(collision_penalty, self.motion_penalty), torch.nan)
         #for collision_distance in collision_distances:
         #    collision_penalty = -torch.where(collision_distance.isnan(), 0, collision_penalty + (self.dc / (collision_distance + EPSILON)) ** self.mc)
