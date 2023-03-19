@@ -216,6 +216,7 @@ class RLContext(ABC):
                  output_directory,
                  save_rate,
                  interval_duration,
+                 episode_timeout,
                  train,
                  evaluation_duration,
                  log=True,
@@ -241,6 +242,7 @@ class RLContext(ABC):
         self.epoch = 0
         self.episode = torch.zeros((robot_batch, 1), device=DEVICE)
         self.episode_start = torch.zeros((robot_batch, 1), device=DEVICE)
+        self.max_episode_length = int(episode_timeout / (interval_duration * 1e-3))
         self.total_episode_count = 0
         self.last_episode_count = 0
         self.goal = None
@@ -267,6 +269,7 @@ class RLContext(ABC):
         self.metrics = {}
         self.her_reward = self.reward_function.rg + self.reward_function.motion_penalty
         self.her_noise_dist = self.noise_dist = torch.distributions.multivariate_normal.MultivariateNormal(torch.zeros(3), torch.eye(3) * 1e-7)
+        self.her_transition_buffer = []
         self.goal_state_index = self.state_augmenter.mapping[StatePartID.goal][0]
 
     def __del__(self):
@@ -320,6 +323,50 @@ class RLContext(ABC):
             state_dict_copy[key] = value.clone()
         return state_dict_copy
 
+    def create_her_transitions(self, state_dict, action, next_state_dict, reward):
+        is_her_terminal = next_state_dict["is_timeout"]
+        self.her_transition_buffer.append((state_dict["state"],
+                                           state_dict["robot_velocity"],
+                                           action,
+                                           next_state_dict["state"],
+                                           torch.where(is_her_terminal, next_state_dict["robot_position"], torch.full_like(next_state_dict["robot_position"], torch.nan)),
+                                           next_state_dict["is_terminal"],
+                                           is_her_terminal,
+                                           torch.where(is_her_terminal, self.her_reward, reward)))
+        if len(self.her_transition_buffer) == self.max_episode_length:
+            transitions = list(zip(*self.her_transition_buffer))
+            states = torch.stack(transitions[0])
+            velocities = torch.stack(transitions[1])
+            actions = torch.stack(transitions[2])
+            next_states = torch.stack(transitions[3])
+            goals = torch.stack(transitions[4])
+            no_terminals = torch.stack(transitions[5]).logical_not()
+            her_terminals = torch.stack(transitions[6])
+            rewards = torch.stack(transitions[7])
+            is_valid = torch.zeros_like(no_terminals)
+            for i in reversed(range(self.max_episode_length)):
+                i_plus_one = min(i + 1, self.max_episode_length - 1)
+                is_valid[i, :, :] = (is_valid[i_plus_one, :, :].logical_and(no_terminals[i, :, :])).logical_or(her_terminals[i, :, :])
+                goals[i, :, :] = torch.where(goals[i, :, :].isnan(), goals[i_plus_one, :, :], goals[i, :, :])
+            if not is_valid.any():
+                return None
+            noise = self.her_noise_dist.sample([goals.size(1)]).to(DEVICE)
+            noise_magnitudes = torch.linalg.vector_norm(noise, dim=-1, keepdims=True)
+            noise /= noise_magnitudes
+            noise *= torch.minimum(noise_magnitudes, torch.tensor(self.goal_reached_threshold_distance))
+            goals += noise.unsqueeze(0)
+            states[:, :, self.goal_state_index:self.goal_state_index + 3] = goals
+            next_states[:, :, self.goal_state_index:self.goal_state_index + 3] = goals
+            states = torch.masked_select(states, is_valid).reshape([-1, states.size(-1)])
+            velocities = torch.masked_select(velocities, is_valid).reshape([-1, 3])
+            actions = torch.masked_select(actions, is_valid).reshape([-1, actions.size(-1)])
+            next_states = torch.masked_select(next_states, is_valid).reshape([-1, states.size(-1)])
+            rewards = torch.masked_select(rewards, is_valid).unsqueeze(-1)
+            self.her_transition_buffer = []
+            return states, velocities, actions, next_states, rewards
+        else:
+            return None
+
     def update(self, state_dict):
         reward = None
         if self.train:
@@ -371,7 +418,6 @@ class RLContext(ABC):
                 self.summary_writer.add_scalar("return", mean_return, self.epoch)
                 self.returns = []
                 episodes_lengths = list(self.episodes_lengths)[-self.log_interval:]
-                self.metrics["max_episode_length"] = max(episodes_lengths)
                 self.metrics["mean_episode_length"] = sum(episodes_lengths) / (episodes_passed + EPSILON)
                 for key in self.metrics:
                     self.summary_writer.add_scalar(f"metrics/{key}", self.metrics[key], self.epoch)
@@ -454,25 +500,17 @@ class DiscreteRLContext(RLContext):
         if self.train:
             self.action_space.update_goal_vector(state_dict["goal"] - state_dict["robot_position"])
             # explore
-            # exploration probs depend on the angle to the current velocity (normal distribution)
-            velocities_normalized = state_dict["robot_velocity"] / (torch.linalg.vector_norm(state_dict["robot_velocity"], dim=-1, keepdim=True) + EPSILON)
-            angles = torch.matmul(velocities_normalized.view([self.robot_batch, 1, 3]), self.action_vectors)
-            angles = torch.acos(torch.clamp(angles, -1, 1)).squeeze()
-            self.exploration_probs = self.exploration_gauss_factor * torch.exp(-0.5 * ((angles / self.exploration_sigma) ** 2))
-            self.exploration_probs[self.exploration_probs.isnan()] = 0.01  # what to do with 0 velocities?
-            # normalize
-            self.exploration_probs = self.exploration_probs.scatter(-1, self.action_index, 0)
-            self.exploration_probs /= (self.exploration_probs.sum(-1, keepdim=True))
-            # insert no-exploration prob
-            self.exploration_probs *= self.exploration_epsilon
-            self.exploration_probs = self.exploration_probs.scatter(-1, self.action_index, 1 - self.exploration_epsilon)
+            self.exploration_probs = self.get_exploration_probs(self.action_index, state_dict["robot_velocity"])
             if "success_ratio" in self.metrics:
                 if self.best_success_ratio is not None and (self.metrics["success_ratio"] > self.best_success_ratio or self.metrics["success_ratio"] >= self.good_success_ratio):
+                    # if self.best_success_ratio is not None:
                     self.exploration_epsilon *= self.exploration_decay
                 self.best_success_ratio = max(self.metrics["success_ratio"], self.best_success_ratio)
-            self.action_index = torch.distributions.Categorical(self.exploration_probs).sample().unsqueeze(-1)
+            self.action_index = torch.distributions.Categorical(probs=self.exploration_probs).sample().unsqueeze(-1)
             if self.epoch % self.log_interval == 0:
                 self.summary_writer.add_scalar("exploration/epsilon", self.exploration_epsilon, self.epoch)
+        elif self.action_index.size(-1) > 1:
+            self.action_index = torch.distributions.Categorical(probs=self.exploration_probs).sample().unsqueeze(-1)
         # get actual action vector
         self.action = self.action_space.get_action(self.action_index)
 
