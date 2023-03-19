@@ -55,8 +55,8 @@ class A2CContext(DiscreteRLContext):
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters())
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters())
         self.replay_buffer = ReplayBuffer(replay_buffer_size, transition=ACTransition)
-        self.log_dict["critic_loss"] = 0
-        self.log_dict["actor_loss"] = 0
+        self.log_dict["loss/critic"] = 0
+        self.log_dict["loss/actor"] = 0
         torch.autograd.set_detect_anomaly(True)
 
     def _get_state_dict_(self):
@@ -117,7 +117,7 @@ class A2CContext(DiscreteRLContext):
                     critic_loss.backward()
                     clip_grad_norm_(self.critic.parameters(), 1)
                     self.critic_optimizer.step()
-                    self.log_dict["critic_loss"] += critic_loss.item()
+                    self.log_dict["loss/critic"] += critic_loss.item()
                 else:
                     rospy.logwarn(f"NaNs in critic loss. Epoch {self.epoch}")
                 if not actor_loss.isnan().any():
@@ -125,7 +125,7 @@ class A2CContext(DiscreteRLContext):
                     actor_loss.backward()
                     clip_grad_norm_(self.actor.parameters(), 1)
                     self.actor_optimizer.step()
-                    self.log_dict["actor_loss"] += actor_loss.item()
+                    self.log_dict["loss/actor"] += actor_loss.item()
                 else:
                     rospy.logwarn(f"NaNs in critic loss. Epoch {self.epoch}")
         self.actor.eval()
