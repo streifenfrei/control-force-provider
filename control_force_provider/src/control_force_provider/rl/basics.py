@@ -496,6 +496,26 @@ class DiscreteRLContext(RLContext):
         self.best_success_ratio = state_dict["best_success_ratio"]
         self._load_impl_(state_dict)
 
+    def get_exploration_probs(self, action_probs, velocity):
+        batch_size = action_probs.size(0)
+        # exploration probs depend on the angle to the current velocity (normal distribution)
+        velocities_normalized = velocity / (torch.linalg.vector_norm(velocity, dim=-1, keepdim=True) + EPSILON)
+        angles = torch.matmul(velocities_normalized.view([batch_size, 1, 3]), self.action_vectors)
+        angles = torch.acos(torch.clamp(angles, -1, 1)).squeeze()
+        exploration_probs = self.exploration_gauss_factor * torch.exp(-0.5 * ((angles / self.exploration_sigma) ** 2))
+        exploration_probs[exploration_probs.isnan()] = 1.  # what to do with 0 velocities?
+        if action_probs.size(-1) == 1:  # deterministic policy
+            # normalize
+            exploration_probs = exploration_probs.scatter(-1, action_probs, 0.)
+            exploration_probs /= exploration_probs.sum(-1, keepdim=True)
+            # insert no-exploration prob
+            exploration_probs *= self.exploration_epsilon
+            exploration_probs = exploration_probs.scatter(-1, action_probs, 1 - self.exploration_epsilon)
+        else:  # stochastic policy
+            exploration_probs /= exploration_probs.sum(-1, keepdim=True)
+            exploration_probs = self.exploration_epsilon * exploration_probs + (1 - self.exploration_epsilon) * action_probs
+        return exploration_probs
+
     def _post_update(self, state_dict):
         if self.train:
             self.action_space.update_goal_vector(state_dict["goal"] - state_dict["robot_position"])
