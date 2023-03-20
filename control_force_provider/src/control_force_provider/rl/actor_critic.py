@@ -94,7 +94,7 @@ class A2CContext(DiscreteRLContext):
                     self.replay_buffer.push(*her_transition, her_exploration_probs)
 
             if len(self.replay_buffer) >= self.batch_size:
-                batch = ACTransition(*zip(*self.replay_buffer.sample(self.batch_size)))
+                batch = self.replay_buffer.sample(self.batch_size)
                 state_batch = torch.cat(batch.state).to(DEVICE)
                 action_batch = torch.cat(batch.action).to(DEVICE)
                 next_state_batch = torch.cat(batch.next_state).to(DEVICE)

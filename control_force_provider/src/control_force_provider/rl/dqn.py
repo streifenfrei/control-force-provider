@@ -8,7 +8,7 @@ from .basics import *
 
 class ReplayBuffer:
     def __init__(self, capacity, transition=Transition):
-        self.buffer = deque([], maxlen=capacity)
+        self.buffer = [deque([], maxlen=capacity) for _ in transition._fields]
         self.transition = transition
 
     def push(self, *args):
@@ -21,11 +21,11 @@ class ReplayBuffer:
         args = []
         for v in t:
             args.append(v[mask.expand([-1, v.size(-1)])].view([-1, v.size(-1)]).cpu().split(1))
-        for chunk in zip(*args):
-            self.buffer.append(self.transition(*chunk))
+        for i, arg in enumerate(args):
+            self.buffer[i] += deque(arg)
 
     def sample(self, batch_size):
-        return random.sample(self.buffer, batch_size)
+        return self.transition(*zip(*random.sample(list(zip(*self.buffer)), batch_size)))
 
     def __len__(self):
         return len(self.buffer)
@@ -96,7 +96,7 @@ class DQNContext(DiscreteRLContext):
 
             if len(self.replay_buffer) >= self.batch_size:
                 data_load_start = time.time()
-                batch = Transition(*zip(*self.replay_buffer.sample(self.batch_size)))
+                batch = self.replay_buffer.sample(self.batch_size)
                 state_batch = torch.cat(batch.state).to(DEVICE)
                 action_batch = torch.cat(batch.action).to(DEVICE)
                 reward_batch = torch.cat(batch.reward).to(DEVICE)
@@ -220,7 +220,7 @@ class DQNNAFContext(ContinuesRLContext):
 
             if len(self.replay_buffer) >= self.batch_size:
                 data_load_start = time.time()
-                batch = Transition(*zip(*self.replay_buffer.sample(self.batch_size)))
+                batch = self.replay_buffer.sample(self.batch_size)
                 state_batch = torch.cat(batch.state).to(DEVICE)
                 velocity_batch = torch.cat(batch.velocity).to(DEVICE)
                 action_batch = torch.cat(batch.action).to(DEVICE)
