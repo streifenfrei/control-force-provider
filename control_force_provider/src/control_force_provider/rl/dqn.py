@@ -28,7 +28,7 @@ class ReplayBuffer:
         return self.transition(*zip(*random.sample(list(zip(*self.buffer)), batch_size)))
 
     def __len__(self):
-        return len(self.buffer)
+        return len(self.buffer[0])
 
 
 class DQN(nn.Module):
