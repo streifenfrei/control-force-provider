@@ -323,7 +323,26 @@ class RLContext(ABC):
             state_dict_copy[key] = value.clone()
         return state_dict_copy
 
-    def create_her_transitions(self, state_dict, action, next_state_dict, reward):
+    def create_her_transitions(self, state_dict, action, next_state_dict, reward, single_transition=False):
+        if single_transition:
+            mask = next_state_dict["collided"].logical_not()
+            if mask.any():
+                states = state_dict["state"][mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
+                actions = action[mask].reshape([-1, 1])
+                velocities = state_dict["robot_velocity"][mask.expand([-1, 3])].reshape([-1, 3])
+                next_states = next_state_dict["state"][mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
+                rewards = torch.full_like(actions, self.her_reward)
+                goals = next_state_dict["robot_position"][mask.expand([-1, 3])].reshape([-1, 3])
+                noise = self.her_noise_dist.sample([goals.size(0)]).to(DEVICE)
+                noise_magnitudes = torch.linalg.vector_norm(noise, dim=-1, keepdims=True)
+                noise /= noise_magnitudes
+                noise *= torch.minimum(noise_magnitudes, torch.tensor(self.goal_reached_threshold_distance))
+                goals += noise
+                states[:, self.goal_state_index:self.goal_state_index + 3] = goals
+                next_states[:, self.goal_state_index:self.goal_state_index + 3] = goals
+                return states, velocities, actions, next_states, rewards
+            else:
+                return None
         is_her_terminal = next_state_dict["is_timeout"]
         self.her_transition_buffer.append((state_dict["state"],
                                            state_dict["robot_velocity"],
