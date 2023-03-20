@@ -451,6 +451,7 @@ class RLContext(ABC):
                         self.log_dict[key] = 0
                     string += f"return: {mean_return}"
                     rospy.loginfo(string)
+                    print(f"0%\t", end="")
                 self.evaluation_epoch = 0
                 self.evaluating = False
                 self.train = True
@@ -465,11 +466,13 @@ class RLContext(ABC):
         else:
             self.epoch += 1
             if self.epoch > 0:
-                if self.epoch % self.log_interval == 0:
+                progress = self.epoch % self.log_interval
+                if progress == 0:
                     self.evaluating = True
                     self.train = False
                 if self.epoch % self.save_rate == 0:
                     self.save()
+                print(f"\r{100 * progress / self.log_interval}%\t", end="")
         return self.action
 
     def warn(self, string):
