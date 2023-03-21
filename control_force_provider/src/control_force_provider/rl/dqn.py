@@ -8,10 +8,12 @@ from .basics import *
 
 class ReplayBuffer:
     def __init__(self, capacity, transition=Transition):
-        self.buffer = [deque([], maxlen=capacity) for _ in transition._fields]
+        self.buffer = [None for _ in transition._fields]
         self.transition = transition
+        self.capacity = capacity
 
     def push(self, *args):
+        args = list(arg.to(DEVICE) for arg in args)
         t = self.transition(*args)
         mask = torch.zeros_like(t.reward)
         for field in t._fields:
@@ -20,15 +22,27 @@ class ReplayBuffer:
         mask = mask.logical_not()
         args = []
         for v in t:
-            args.append(v[mask.expand([-1, v.size(-1)])].view([-1, v.size(-1)]).cpu().split(1))
+            args.append(v[mask.expand([-1, v.size(-1)])].view([-1, v.size(-1)]).cpu())
         for i, arg in enumerate(args):
-            self.buffer[i] += deque(arg)
+            self.buffer[i] = arg if self.buffer[i] is None else torch.cat([arg, self.buffer[i]])
+            if self.buffer[i].size(0) > self.capacity:
+                self.buffer[i] = self.buffer[i][:self.capacity, :]
 
     def sample(self, batch_size):
-        return self.transition(*zip(*random.sample(list(zip(*self.buffer)), batch_size)))
+        def generator():
+            start_index = 0
+            end_index = batch_size
+            while start_index < len(self):
+                args = []
+                for buffer in self.buffer:
+                    args.append(buffer[start_index:end_index,:])
+                yield self.transition(*args)
+                start_index += batch_size
+                end_index = min(len(self) - 1, end_index + batch_size)
+        return generator
 
     def __len__(self):
-        return len(self.buffer[0])
+        return 0 if self.buffer[0] is None else len(self.buffer[0])
 
 
 class DQN(nn.Module):

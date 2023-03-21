@@ -24,10 +24,10 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
   collision_threshold_distance_ = utils::getConfigValue<double>(config["rl"], "collision_threshold_distance")[0];
   timeout_ = int(utils::getConfigValue<double>(config["rl"], "episode_timeout")[0] * 1000 / interval_duration_);
   timeout_ = timeout_ <= 0 ? std::numeric_limits<int>::max() : timeout_;
-  epoch_count_ = torch::zeros({batch_size_, 1}, utils::getTensorOptions(device_, torch::kInt32));
+  epoch_count_ = torch::zeros({batch_size_, 1}, utils::getTensorOptions(torch::kCPU, torch::kInt32));
   goal_reached_threshold_distance_ = utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0];
   ee_positions_ = episode_context_->getStart();
-  is_terminal_ = torch::zeros({batch_size_, 1}, utils::getTensorOptions(device_, torch::kBool));
+  is_terminal_ = torch::zeros({batch_size_, 1}, utils::getTensorOptions(torch::kCPU, torch::kBool));
   env_->setRCM(torch::from_blob(rcm.data(), {1, 3}, torch::kFloat32).clone());
   if (utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]) env_->setOffset(env_->getRCM().clone());
   env_->update(ee_positions_);
@@ -63,7 +63,7 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
 }
 
 std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& actions) {
-  torch::Tensor actions_copy = actions.to(device_);
+  torch::Tensor actions_copy = actions.device() == device_ ? actions.clone() : actions.to(device_);
   torch::Tensor actions_is_nan = actions_copy.isnan();
   if (actions_is_nan.any().item().toBool()) {
     ROS_WARN_STREAM_NAMED("RLEnvironment", "Some actions are NaN.");
@@ -75,29 +75,37 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
     actions_copy += force;
     env_->clipForce(actions_copy);
   }
-  ee_positions_ += actions_copy * interval_duration_;
-  ee_positions_ =
-      ee_positions_.clamp(env_->getWorkspaceBbOrigin() + env_->getOffset(), env_->getWorkspaceBbOrigin() + env_->getOffset() + env_->getWorkspaceBbDims());
+  torch::Tensor ee_positions_dev = ee_positions_.to(device_);
+  ee_positions_dev += actions_copy * interval_duration_;
+  ee_positions_dev =
+      ee_positions_dev.clamp(env_->getWorkspaceBbOrigin() + env_->getOffset(), env_->getWorkspaceBbOrigin() + env_->getOffset() + env_->getWorkspaceBbDims());
   env_->update(ee_positions_);
   // check if episode ended by reaching goal ...
-  reached_goal_ = utils::norm((env_->getGoal() + env_->getOffset() - ee_positions_)) < goal_reached_threshold_distance_;
+  reached_goal_ = utils::norm((env_->getGoal().to(device_) + env_->getOffset() - ee_positions_dev)) < goal_reached_threshold_distance_;
   // ... or by collision
   collided_ = torch::zeros_like(reached_goal_);
   for (auto& distance_to_obs : env_->getCollisionDistances()) {
-    torch::Tensor not_nan = distance_to_obs.isnan().logical_not();
-    collided_ = collided_.logical_or(not_nan.logical_and(distance_to_obs < collision_threshold_distance_));
+    torch::Tensor distance_to_obs_dev = distance_to_obs.to(device_);
+    torch::Tensor not_nan = distance_to_obs_dev.isnan().logical_not();
+    collided_ = collided_.logical_or(not_nan.logical_and(distance_to_obs_dev < collision_threshold_distance_));
   }
   // ... or by timeout
-  is_timeout_ = epoch_count_ >= timeout_;
+  torch::Tensor epoch_count_dev = epoch_count_.to(device_);
+  is_timeout_ = epoch_count_dev >= timeout_;
   episode_context_->generateEpisode(is_terminal_);
   episode_context_->startEpisode(is_terminal_);
   env_->setStartTime(torch::where(is_terminal_, Time::now(), env_->getStartTime()));
-  ee_positions_ = torch::where(is_terminal_, episode_context_->getStart(), ee_positions_);
+  torch::Tensor is_terminal_dev = is_terminal_.to(device_);
+  ee_positions_ = torch::where(is_terminal_dev, episode_context_->getStart().to(device_), ee_positions_dev).cpu();
   is_terminal_ = reached_goal_.logical_or(collided_.logical_or(is_timeout_));
-  epoch_count_ = torch::where(is_terminal_, 0, epoch_count_ + 1);
+  epoch_count_ = torch::where(is_terminal_dev, 0, epoch_count_dev + 1).cpu();
   env_->setGoal(episode_context_->getGoal());
   env_->update(ee_positions_);
   *time_ += interval_duration_ * 1e-3;
+  reached_goal_ = reached_goal_.cpu();
+  collided_ = collided_.cpu();
+  is_timeout_ = is_timeout_.cpu();
+  is_terminal_ = is_terminal_dev.cpu();
   return getStateDict();
 }
 

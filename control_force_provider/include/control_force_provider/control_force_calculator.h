@@ -115,6 +115,7 @@ class ControlForceCalculator {
 
  protected:
   boost::shared_ptr<Environment> env;
+  torch::DeviceType device_;
   friend class Visualizer;
 
   virtual void getForceImpl(torch::Tensor& force) = 0;
@@ -172,21 +173,22 @@ class StateProvider {
    private:
     std::vector<std::deque<torch::Tensor>> histories_;
     unsigned int stride_index_ = 0;
+    torch::DeviceType device_;
 
    public:
     std::vector<const torch::Tensor*> tensors_;
     int length_ = 0;
     unsigned int history_length_ = 1;
     unsigned int history_stride_ = 0;
-    StatePopulator() = default;
+    StatePopulator(torch::DeviceType device);
     void populate(torch::Tensor& state);
     [[nodiscard]] unsigned int getDim() const { return length_ * tensors_.size() * history_length_; };
   };
   std::vector<StatePopulator> state_populators_;
-  static StatePopulator createPopulatorFromString(const Environment& env, const std::string& str);
+  static StatePopulator createPopulatorFromString(const Environment& env, const std::string& str, torch::DeviceType = torch::kCPU);
 
  public:
-  StateProvider(const Environment& env, const std::string& state_pattern);
+  StateProvider(const Environment& env, const std::string& state_pattern, torch::DeviceType device = torch::kCPU);
   torch::Tensor createState();
   ~StateProvider() = default;
   [[nodiscard]] unsigned int getStateDim() const { return state_dim_; };

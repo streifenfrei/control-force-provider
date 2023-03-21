@@ -104,12 +104,12 @@ class RewardFunction:
         #distance_to_goal = torch.linalg.norm(goal - robot_position, dim=-1).unsqueeze(-1)
         # motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
         collision_penalty = torch.where(mask, 0, torch.nan)
-        collision_penalty -= torch.where(state_dict["collided"], self.max_penalty, 0)
+        collision_penalty -= torch.where(state_dict["collided"].to(DEVICE), self.max_penalty, 0)
         motion_reward = torch.where(mask, torch.full_like(collision_penalty, self.motion_penalty), torch.nan)
         #for collision_distance in collision_distances:
         #    collision_penalty = -torch.where(collision_distance.isnan(), 0, collision_penalty + (self.dc / (collision_distance + EPSILON)) ** self.mc)
         #collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
-        goal_reward = torch.where(mask, torch.where(state_dict["reached_goal"], self.rg, torch.zeros_like(collision_penalty)), torch.nan)
+        goal_reward = torch.where(mask, torch.where(state_dict["reached_goal"].to(DEVICE), self.rg, torch.zeros_like(collision_penalty)), torch.nan)
         #if self.max_distance is None:
         #    self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
         #timeout_penalty = self.min_timeout_penalty + ((distance_to_goal / self.max_distance) * self.timeout_penalty_range)
@@ -146,6 +146,7 @@ class ActionSpace:
         self.goal_vectors_index_start = 0
 
     def update_goal_vector(self, goal_vector):
+        goal_vector = goal_vector.to(DEVICE)
         norm = torch.linalg.vector_norm(goal_vector, dim=-1, keepdim=True)
         goal_vector /= norm + EPSILON
         min_angle = torch.full([goal_vector.size(0), 1], torch.inf, device=DEVICE)
@@ -159,6 +160,7 @@ class ActionSpace:
             self.goal_vectors[i] = goal_vector * torch.minimum(norm, torch.tensor((i + 1) * self.magnitude_step))
 
     def get_action(self, index):
+        index = index.to(DEVICE)
         index = index.expand([-1, 3])
         actions = torch.gather(self.action_space_tensor, 0, index)
         for i in range(len(self.goal_vectors)):
@@ -172,17 +174,19 @@ class ActionSpace:
 class RLContext(ABC):
     class Accumulator:
         def __init__(self, batch_size=1):
-            self.state = torch.zeros(batch_size, device=DEVICE)
-            self.count = torch.zeros(batch_size, device=DEVICE)
-            self.default_mask = torch.ones_like(self.state, device=DEVICE, dtype=torch.bool)
+            self.state = torch.zeros(batch_size)
+            self.count = torch.zeros(batch_size)
+            self.default_mask = torch.ones_like(self.state, dtype=torch.bool)
 
         def update_state(self, value, mask=None):
             if mask is None:
                 mask = self.default_mask
             mask = mask.to(DEVICE)
             value = value.to(DEVICE)
-            self.state = torch.where(mask, self.state + value, self.state)
-            self.count = torch.where(mask, self.count + 1, self.count)
+            state_dev = self.state.to(DEVICE)
+            self.state = torch.where(mask, state_dev + value, state_dev).cpu()
+            count_dev = self.count.to(DEVICE)
+            self.count = torch.where(mask, count_dev + 1, count_dev).cpu()
 
         def get_value(self, mask=None):
             if mask is None:
@@ -193,8 +197,9 @@ class RLContext(ABC):
         def reset(self, mask=None):
             if mask is None:
                 mask = self.default_mask
-            self.state = torch.where(mask, 0, self.state)
-            self.count = torch.where(mask, 0, self.count)
+            mask = mask.to(DEVICE)
+            self.state = torch.where(mask, 0, self.state.to(DEVICE)).cpu()
+            self.count = torch.where(mask, 0, self.count.to(DEVICE)).cpu()
 
     class AccumulatorFactory:
         def __init__(self, batch_size):
@@ -231,7 +236,7 @@ class RLContext(ABC):
         self.output_dir = output_directory
         self.save_rate = save_rate
         self.summary_writer = SummaryWriter(os.path.join(output_directory, "logs"), max_queue=10000, flush_secs=10)
-        self.log_interval = 10000
+        self.log_interval = save_rate
         self.log_dict = {}
         self.episode_accumulators = defaultdict(RLContext.AccumulatorFactory(robot_batch))
         self.episode_accumulators_mean = {}
@@ -240,8 +245,8 @@ class RLContext(ABC):
         self.last_state_dict = None
         self.action = None
         self.epoch = 0
-        self.episode = torch.zeros((robot_batch, 1), device=DEVICE)
-        self.episode_start = torch.zeros((robot_batch, 1), device=DEVICE)
+        self.episode = torch.zeros((robot_batch, 1))
+        self.episode_start = torch.zeros((robot_batch, 1))
         self.max_episode_length = int(episode_timeout / (interval_duration * 1e-3))
         self.total_episode_count = 0
         self.last_episode_count = 0
@@ -259,8 +264,8 @@ class RLContext(ABC):
         self.episodes_passed = []
         self.timeouts = []
         self.returns = []
-        self.acc_reward = torch.zeros([robot_batch, 1], device=DEVICE)
-        self.acc_lengths = torch.zeros([robot_batch, 1], device=DEVICE)
+        self.acc_reward = torch.zeros([robot_batch, 1])
+        self.acc_lengths = torch.zeros([robot_batch, 1])
         self.log = log
         self.train = train
         self.evaluating = False
@@ -325,14 +330,14 @@ class RLContext(ABC):
 
     def create_her_transitions(self, state_dict, action, next_state_dict, reward, single_transition=False):
         if single_transition:
-            mask = next_state_dict["collided"].logical_not()
+            mask = next_state_dict["collided"].to(DEVICE).logical_not()
             if mask.any():
-                states = state_dict["state"][mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
+                states = state_dict["state"].to(DEVICE)[mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
                 actions = action[mask].reshape([-1, 1])
-                velocities = state_dict["robot_velocity"][mask.expand([-1, 3])].reshape([-1, 3])
-                next_states = next_state_dict["state"][mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
+                velocities = state_dict["robot_velocity"].to(DEVICE)[mask.expand([-1, 3])].reshape([-1, 3])
+                next_states = next_state_dict["state"].to(DEVICE)[mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
                 rewards = torch.full_like(actions, self.her_reward)
-                goals = next_state_dict["robot_position"][mask.expand([-1, 3])].reshape([-1, 3])
+                goals = next_state_dict["robot_position"].to(DEVICE)[mask.expand([-1, 3])].reshape([-1, 3])
                 noise = self.her_noise_dist.sample([goals.size(0)]).to(DEVICE)
                 noise_magnitudes = torch.linalg.vector_norm(noise, dim=-1, keepdims=True)
                 noise /= noise_magnitudes
@@ -354,15 +359,15 @@ class RLContext(ABC):
                                            torch.where(is_her_terminal, self.her_reward, reward)))
         if len(self.her_transition_buffer) == self.max_episode_length:
             transitions = list(zip(*self.her_transition_buffer))
-            states = torch.stack(transitions[0])
-            velocities = torch.stack(transitions[1])
-            actions = torch.stack(transitions[2])
-            next_states = torch.stack(transitions[3])
-            goals = torch.stack(transitions[4])
-            no_terminals = torch.stack(transitions[5]).logical_not()
-            her_terminals = torch.stack(transitions[6])
-            rewards = torch.stack(transitions[7])
-            is_valid = torch.zeros_like(no_terminals)
+            states = torch.stack(transitions[0]).to(DEVICE)
+            velocities = torch.stack(transitions[1]).to(DEVICE)
+            actions = torch.stack(transitions[2]).to(DEVICE)
+            next_states = torch.stack(transitions[3]).to(DEVICE)
+            goals = torch.stack(transitions[4]).to(DEVICE)
+            no_terminals = torch.stack(transitions[5]).to(DEVICE).logical_not()
+            her_terminals = torch.stack(transitions[6]).to(DEVICE)
+            rewards = torch.stack(transitions[7]).to(DEVICE)
+            is_valid = torch.zeros_like(no_terminals).to(DEVICE)
             for i in reversed(range(self.max_episode_length)):
                 i_plus_one = min(i + 1, self.max_episode_length - 1)
                 is_valid[i, :, :] = (is_valid[i_plus_one, :, :].logical_and(no_terminals[i, :, :])).logical_or(her_terminals[i, :, :])
@@ -388,10 +393,11 @@ class RLContext(ABC):
 
     def update(self, state_dict):
         reward = None
+        is_terminal = state_dict["is_terminal"].to(DEVICE)
         if self.train:
             if self.max_distance is None:
                 self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
-            goal = state_dict["goal"]
+            goal = state_dict["goal"].to(DEVICE)
             if self.goal is None:
                 self.goal = goal
             # check for finished episodes
@@ -403,30 +409,34 @@ class RLContext(ABC):
                     if key not in self.episode_accumulators_mean:
                         self.episode_accumulators_mean[key] = value if key not in self.episode_accumulators_mean else self.episode_accumulators_mean[key] + value
                     self.episode_accumulators[key].reset(is_new_episode)
-                steps_per_episode = torch.masked_select(self.epoch - self.episode_start, is_new_episode).cpu().numpy()
                 self.total_episode_count += is_new_episode.sum().item()
                 self.goal = goal
                 self.episode_start = torch.where(is_new_episode, self.epoch, self.episode_start)
             # get reward
             reward, motion_reward, collision_penalty, goal_reward = self.reward_function(state_dict, self.last_state_dict, is_not_new_episode)
-            self.acc_reward = torch.where(reward.isnan(), self.acc_reward, self.acc_reward + reward)
-            mean_return = torch.masked_select(self.acc_reward, state_dict["is_terminal"]).mean()
+            acc_reward_dev = self.acc_reward.to(DEVICE)
+            acc_reward_dev = torch.where(reward.isnan(), acc_reward_dev, acc_reward_dev + reward)
+            mean_return = torch.masked_select(acc_reward_dev, is_terminal).mean()
             if not mean_return.isnan():
                 self.returns.append(mean_return.item())
-            self.acc_reward = torch.where(state_dict["is_terminal"], 0, self.acc_reward)
+            acc_reward_dev = torch.where(is_terminal, 0, acc_reward_dev)
+            self.acc_reward = acc_reward_dev.cpu()
         # do the update
         self._update_impl(state_dict, reward)
         self._post_update(state_dict)
         self.last_state_dict = self._copy_state_dict(state_dict)
         if self.evaluating:
-            self.acc_lengths += 1
+            acc_lengths_dev = self.acc_lengths.to(DEVICE) + 1
             self.evaluation_epoch += 1
-            self.successes.append(state_dict["reached_goal"].sum().item())
-            self.collisions.append(state_dict["collided"].sum().item())
-            self.timeouts.append(state_dict["is_timeout"].sum().item())
-            self.episodes_passed.append(state_dict["is_terminal"].sum().item())
-            self.episodes_lengths.append(self.acc_lengths[state_dict["is_terminal"]].sum().item())
-            self.acc_lengths = torch.where(state_dict["is_terminal"], 0, self.acc_lengths)
+            reached_goal_dev = state_dict["reached_goal"].to(DEVICE)
+            collided_dev = state_dict["collided"].to(DEVICE)
+            is_timeout_dev = state_dict["is_timeout"].to(DEVICE)
+            self.successes.append(reached_goal_dev.sum().item())
+            self.collisions.append(collided_dev.sum().item())
+            self.timeouts.append(is_timeout_dev.sum().item())
+            self.episodes_passed.append(is_terminal.sum().item())
+            self.episodes_lengths.append(acc_lengths_dev[is_terminal].sum().item())
+            self.acc_lengths = torch.where(is_terminal, 0, self.acc_lengths)
             if self.evaluation_epoch != 0 and self.evaluation_epoch % self.evaluation_duration == 0:
                 self.metrics = {}
                 episodes_passed = sum(list(self.episodes_passed)[-self.log_interval:])
@@ -462,8 +472,10 @@ class RLContext(ABC):
                 self.episodes_passed = []
                 self.timeouts = []
                 self.returns = []
-                self.acc_reward = torch.zeros([self.robot_batch, 1], device=DEVICE)
-                self.acc_lengths = torch.zeros([self.robot_batch, 1], device=DEVICE)
+                self.acc_reward = torch.zeros([self.robot_batch, 1])
+                self.acc_lengths = torch.zeros([self.robot_batch, 1])
+            else:
+                self.acc_lengths = acc_lengths_dev.cpu()
         else:
             self.epoch += 1
             if self.epoch > 0:
@@ -520,6 +532,8 @@ class DiscreteRLContext(RLContext):
         self._load_impl_(state_dict)
 
     def get_exploration_probs(self, action_probs, velocity):
+        action_probs = action_probs.to(DEVICE)
+        velocity = velocity.to(DEVICE)
         batch_size = action_probs.size(0)
         # exploration probs depend on the angle to the current velocity (normal distribution)
         velocities_normalized = velocity / (torch.linalg.vector_norm(velocity, dim=-1, keepdim=True) + EPSILON)
@@ -541,7 +555,7 @@ class DiscreteRLContext(RLContext):
 
     def _post_update(self, state_dict):
         if self.train:
-            self.action_space.update_goal_vector(state_dict["goal"] - state_dict["robot_position"])
+            self.action_space.update_goal_vector(state_dict["goal"].to(DEVICE) - state_dict["robot_position"].to(DEVICE))
             # explore
             self.exploration_probs = self.get_exploration_probs(self.action_index, state_dict["robot_velocity"])
             if "success_ratio" in self.metrics:
