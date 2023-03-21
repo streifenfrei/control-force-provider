@@ -450,6 +450,7 @@ class RLContext(ABC):
                         string += f"{key}: {mean}\t "
                         self.log_dict[key] = 0
                     string += f"return: {mean_return}"
+                    print("\r", end="")
                     rospy.loginfo(string)
                     print(f"0%\t", end="")
                 self.evaluation_epoch = 0
@@ -544,10 +545,10 @@ class DiscreteRLContext(RLContext):
             # explore
             self.exploration_probs = self.get_exploration_probs(self.action_index, state_dict["robot_velocity"])
             if "success_ratio" in self.metrics:
-                if self.best_success_ratio is not None and (self.metrics["success_ratio"] > self.best_success_ratio or self.metrics["success_ratio"] >= self.good_success_ratio):
-                    # if self.best_success_ratio is not None:
+                #if self.best_success_ratio is not None and (self.metrics["success_ratio"] > self.best_success_ratio or self.metrics["success_ratio"] >= self.good_success_ratio):
+                if self.best_success_ratio != self.metrics["success_ratio"]:
                     self.exploration_epsilon *= self.exploration_decay
-                self.best_success_ratio = max(self.metrics["success_ratio"], self.best_success_ratio)
+                self.best_success_ratio = self.metrics["success_ratio"]
             self.action_index = torch.distributions.Categorical(probs=self.exploration_probs).sample().unsqueeze(-1)
             if self.epoch % self.log_interval == 0:
                 self.summary_writer.add_scalar("exploration/epsilon", self.exploration_epsilon, self.epoch)
