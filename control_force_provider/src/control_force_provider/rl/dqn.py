@@ -1,8 +1,7 @@
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
-import random
+from threading import Lock
 import time
-from collections import deque
 from .basics import *
 
 
@@ -11,6 +10,7 @@ class ReplayBuffer:
         self.buffer = [None for _ in transition._fields]
         self.transition = transition
         self.capacity = capacity
+        self.lock = Lock()
 
     def push(self, *args):
         args = list(arg.to(DEVICE) for arg in args)
@@ -23,10 +23,11 @@ class ReplayBuffer:
         args = []
         for v in t:
             args.append(v[mask.expand([-1, v.size(-1)])].view([-1, v.size(-1)]).cpu())
-        for i, arg in enumerate(args):
-            self.buffer[i] = arg if self.buffer[i] is None else torch.cat([arg, self.buffer[i]])
-            if self.buffer[i].size(0) > self.capacity:
-                self.buffer[i] = self.buffer[i][:self.capacity, :]
+        with self.lock:
+            for i, arg in enumerate(args):
+                self.buffer[i] = arg if self.buffer[i] is None else torch.cat([arg, self.buffer[i]])
+                if self.buffer[i].size(0) > self.capacity:
+                    self.buffer[i] = self.buffer[i][:self.capacity, :]
 
     def sample(self, batch_size):
         def generator():
@@ -34,8 +35,9 @@ class ReplayBuffer:
             end_index = batch_size
             while start_index < len(self):
                 args = []
-                for buffer in self.buffer:
-                    args.append(buffer[start_index:end_index,:])
+                with self.lock:
+                    for buffer in self.buffer:
+                        args.append(buffer[start_index:end_index, :].to(DEVICE))
                 yield self.transition(*args)
                 start_index += batch_size
                 end_index = min(len(self) - 1, end_index + batch_size)
@@ -111,10 +113,10 @@ class DQNContext(DiscreteRLContext):
             if len(self.replay_buffer) >= self.batch_size:
                 data_load_start = time.time()
                 batch = self.replay_buffer.sample(self.batch_size)
-                state_batch = torch.cat(batch.state).to(DEVICE)
-                action_batch = torch.cat(batch.action).to(DEVICE)
-                reward_batch = torch.cat(batch.reward).to(DEVICE)
-                next_state_batch = torch.cat(batch.next_state).to(DEVICE)
+                state_batch = batch.state
+                action_batch = batch.action
+                reward_batch = batch.reward
+                next_state_batch = batch.next_state
                 is_terminal = next_state_batch.isnan().any(-1, keepdims=True)
                 next_state_batch = torch.where(next_state_batch.isnan(), 0, next_state_batch)
                 self.optimizer.zero_grad()
@@ -235,11 +237,11 @@ class DQNNAFContext(ContinuesRLContext):
             if len(self.replay_buffer) >= self.batch_size:
                 data_load_start = time.time()
                 batch = self.replay_buffer.sample(self.batch_size)
-                state_batch = torch.cat(batch.state).to(DEVICE)
-                velocity_batch = torch.cat(batch.velocity).to(DEVICE)
-                action_batch = torch.cat(batch.action).to(DEVICE)
-                reward_batch = torch.cat(batch.reward).to(DEVICE)
-                next_state_batch = torch.cat(batch.next_state).to(DEVICE)
+                state_batch = batch.state
+                velocity_batch = batch.velocity
+                action_batch = batch.action
+                reward_batch = batch.reward
+                next_state_batch = batch.next_state
                 is_terminal = next_state_batch.isnan().any(-1, keepdims=True)
                 next_state_batch = torch.where(next_state_batch.isnan(), state_batch, next_state_batch)
                 self.batch_load_time_accumulator.update_state(torch.tensor(time.time() - data_load_start, device=DEVICE))

@@ -1,4 +1,6 @@
 import torch.nn as nn
+import time
+from threading import Thread
 from torch.nn.utils import clip_grad_norm_
 from .basics import *
 from .dqn import ReplayBuffer
@@ -57,7 +59,11 @@ class A2CContext(DiscreteRLContext):
         self.replay_buffer = ReplayBuffer(replay_buffer_size, transition=ACTransition)
         self.log_dict["loss/critic"] = 0
         self.log_dict["loss/actor"] = 0
-        torch.autograd.set_detect_anomaly(True)
+        self.stop_update = False
+        self.update_thread = Thread(target=self.update_runnable).start()
+
+    def __del__(self):
+        self.stop_update = True
 
     def _get_state_dict_(self):
         return {"actor_model_state_dict": self.actor.state_dict(),
@@ -78,6 +84,53 @@ class A2CContext(DiscreteRLContext):
         jsd = 0.5 * (self.kld(m, torch.log(p)) + self.kld(m, torch.log(q)))
         return torch.exp(-jsd)
 
+    def update_runnable(self):
+        batch_generator = None
+        while not self.stop_update:
+            if len(self.replay_buffer) >= self.batch_size:
+                if batch_generator is None:
+                    batch_generator = self.replay_buffer.sample(self.batch_size)()
+                try:
+                    batch = next(batch_generator)
+                except StopIteration:
+                    batch_generator = None
+                    continue
+                state_batch = batch.state
+                action_batch = batch.action
+                next_state_batch = batch.next_state
+                reward_batch = batch.reward
+                exploration_prob_batch = batch.exploration_prob
+                is_terminal = next_state_batch.isnan().any(-1, keepdims=True).float()
+                next_state_batch = torch.where(next_state_batch.isnan(), 0, next_state_batch)
+                advantage = reward_batch + (1. - is_terminal) * self.discount_factor * self.critic(next_state_batch) - self.critic(state_batch)
+                action_probs = self.actor(state_batch)
+                # off-policy correction
+                action_probs = action_probs.gather(-1, action_batch)
+                weights = self.get_correction_weight(action_probs, exploration_prob_batch).detach()
+                weights_sum = weights.sum()
+                # loss calculation
+                critic_loss = torch.linalg.norm(advantage * weights) / weights_sum
+                actor_loss = torch.log(action_probs) * advantage.detach() * weights
+                actor_loss = -actor_loss.sum() / weights_sum
+                if not critic_loss.isnan().any():
+                    self.critic_optimizer.zero_grad()
+                    critic_loss.backward()
+                    clip_grad_norm_(self.critic.parameters(), 1)
+                    self.critic_optimizer.step()
+                    self.log_dict["loss/critic"] += critic_loss.item()
+                else:
+                    rospy.logwarn(f"NaNs in critic loss. Epoch {self.epoch}")
+                if not actor_loss.isnan().any():
+                    self.actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    clip_grad_norm_(self.actor.parameters(), 1)
+                    self.actor_optimizer.step()
+                    self.log_dict["loss/actor"] += actor_loss.item()
+                else:
+                    rospy.logwarn(f"NaNs in critic loss. Epoch {self.epoch}")
+            else:
+                time.sleep(1)
+
     def _update_impl(self, state_dict, reward):
         if self.train:
             if self.last_state_dict is not None:
@@ -92,42 +145,6 @@ class A2CContext(DiscreteRLContext):
                         her_exploration_probs = self.get_exploration_probs(self.actor(her_state), her_velocity).gather(-1, her_action)
                     self.actor.train()
                     self.replay_buffer.push(*her_transition, her_exploration_probs)
-
-            if len(self.replay_buffer) >= self.batch_size:
-                for batch in self.replay_buffer.sample(self.batch_size)():
-                    state_batch = batch.state.to(DEVICE)
-                    action_batch = batch.action.to(DEVICE)
-                    next_state_batch = batch.next_state.to(DEVICE)
-                    reward_batch = batch.reward.to(DEVICE)
-                    exploration_prob_batch = batch.exploration_prob.to(DEVICE)
-                    is_terminal = next_state_batch.isnan().any(-1, keepdims=True).float()
-                    next_state_batch = torch.where(next_state_batch.isnan(), 0, next_state_batch)
-                    advantage = reward_batch + (1. - is_terminal) * self.discount_factor * self.critic(next_state_batch) - self.critic(state_batch)
-                    action_probs = self.actor(state_batch)
-                    # off-policy correction
-                    action_probs = action_probs.gather(-1, action_batch)
-                    weights = self.get_correction_weight(action_probs, exploration_prob_batch).detach()
-                    weights_sum = weights.sum()
-                    # loss calculation
-                    critic_loss = torch.linalg.norm(advantage * weights) / weights_sum
-                    actor_loss = torch.log(action_probs) * advantage.detach() * weights
-                    actor_loss = -actor_loss.sum() / weights_sum
-                    if not critic_loss.isnan().any():
-                        self.critic_optimizer.zero_grad()
-                        critic_loss.backward()
-                        clip_grad_norm_(self.critic.parameters(), 1)
-                        self.critic_optimizer.step()
-                        self.log_dict["loss/critic"] += critic_loss.item()
-                    else:
-                        rospy.logwarn(f"NaNs in critic loss. Epoch {self.epoch}")
-                    if not actor_loss.isnan().any():
-                        self.actor_optimizer.zero_grad()
-                        actor_loss.backward()
-                        clip_grad_norm_(self.actor.parameters(), 1)
-                        self.actor_optimizer.step()
-                        self.log_dict["loss/actor"] += actor_loss.item()
-                    else:
-                        rospy.logwarn(f"NaNs in critic loss. Epoch {self.epoch}")
         self.actor.eval()
         with torch.no_grad():
             self.action_index = self.actor(state_dict["state"].to(DEVICE))
