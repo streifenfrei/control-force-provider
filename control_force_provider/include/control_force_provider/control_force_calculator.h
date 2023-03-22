@@ -22,7 +22,7 @@ namespace control_force_provider::backend {
 class Environment {
  private:
   const inline static double workspace_bb_stopping_strength = 0.001;
-  const torch::DeviceType device_;
+  torch::DeviceType device_;
   torch::Tensor ee_position_;
   boost::shared_mutex ee_pos_mtx;
   torch::Tensor ee_rotation_;
@@ -53,8 +53,8 @@ class Environment {
   boost::shared_mutex cd_mtx;
   torch::Tensor offset_;
   boost::shared_mutex offset_mtx;
-  const torch::Tensor workspace_bb_dims_;
-  const torch::Scalar max_force_;
+  torch::Tensor workspace_bb_dims_;
+  torch::Scalar max_force_;
   torch::Tensor start_time_;
   double last_update_;
   torch::Tensor elapsed_time_;
@@ -63,6 +63,7 @@ class Environment {
 
  public:
   Environment(const YAML::Node& config, int batch_size = 1, torch::DeviceType device = torch::kCPU);
+  void setDevice(torch::DeviceType device);
   const torch::Tensor& getEePosition() const;
   boost::shared_lock_guard<boost::shared_mutex> getEePositionLock();
   const torch::Tensor& getEeRotation() const;
@@ -118,6 +119,7 @@ class ControlForceCalculator {
   torch::DeviceType device_;
   friend class Visualizer;
 
+  virtual void copyToDevice(torch::DeviceType device) = 0;
   virtual void getForceImpl(torch::Tensor& force) = 0;
 
  public:
@@ -131,6 +133,11 @@ class ControlForceCalculator {
       env->setRCM(rcm_);
     }
   };
+  void setDevice(torch::DeviceType device) {
+    env->setDevice(device);
+    copyToDevice(device);
+    device_ = device;
+  }
   [[nodiscard]] torch::Tensor getGoal() const { return env->getGoal(); }
   void setGoal(const torch::Tensor& goal_) {
     goal_available_ = true;
@@ -157,6 +164,7 @@ class PotentialFieldMethod : public ControlForceCalculator {
 
  protected:
   void getForceImpl(torch::Tensor& force) override;
+  void copyToDevice(torch::DeviceType device) override{};
 
  public:
   PotentialFieldMethod(const YAML::Node& config);
@@ -211,6 +219,7 @@ class EpisodeContext {
  public:
   EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles_, boost::shared_ptr<ObstacleLoader> obstacle_loader, const YAML::Node& config,
                  unsigned int batch_size = 1, torch::DeviceType device = torch::kCPU);
+  void setDevice(torch::DeviceType device);
   void generateEpisode(const torch::Tensor& mask);
   void generateEpisode();
   void startEpisode(const torch::Tensor& mask);
@@ -243,6 +252,7 @@ class ReinforcementLearningAgent : public ControlForceCalculator {
   const std::string output_dir;
   boost::shared_ptr<StateProvider> state_provider;
   boost::shared_ptr<ros::ServiceClient> training_service_client;
+  void copyToDevice(torch::DeviceType device) override;
 
   virtual torch::Tensor getActionInference(torch::Tensor& state) = 0;
   void getForceImpl(torch::Tensor& force) override;

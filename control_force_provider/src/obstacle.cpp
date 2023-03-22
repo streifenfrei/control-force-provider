@@ -40,6 +40,13 @@ std::vector<boost::shared_ptr<Obstacle>> Obstacle::createFromConfig(const YAML::
   return obstacles;
 }
 
+void Obstacle::setDevice(torch::DeviceType device) {
+  start_time = start_time.to(device);
+  rcm_ = rcm_.to(device);
+  copyToDevice(device);
+  device_ = device;
+}
+
 void Obstacle::reset(const torch::Tensor& mask, const torch::Tensor& offset) {
   torch::Tensor now = torch::full(1, Time::now(), utils::getTensorOptions(device_));
   torch::Tensor offset_ = torch::min(offset.to(device_), now);
@@ -74,6 +81,14 @@ WaypointsObstacle::WaypointsObstacle(const YAML::Node& config, const std::string
   setRCM(utils::createTensor({rcm_raw[0], rcm_raw[1], rcm_raw[2]}, 0, -1, device_));
 }
 
+void WaypointsObstacle::copyToDevice(torch::DeviceType device) {
+  for (size_t i = 0; i < waypoints_.size(); i++) {
+    waypoints_[i] = waypoints_[i].to(device);
+    segments_[i] = segments_[i].to(device);
+    segments_normalized_[i] = segments_normalized_[i].to(device);
+  }
+}
+
 torch::Tensor WaypointsObstacle::getPositionAt(torch::Tensor time) {
   if (waypoints_.size() == 1) return torch::expand_copy(waypoints_[0], {time.size(0), 3});
   time = torch::fmod(time.to(device_), total_duration_);
@@ -99,6 +114,8 @@ torch::Tensor WaypointsObstacle::getPositionAt(torch::Tensor time) {
 }
 
 FramesObstacle::FramesObstacle(const std::string& id, int batch_size, torch::DeviceType device) : Obstacle(id, batch_size, device) { iter_ = frames_.begin(); }
+
+void FramesObstacle::copyToDevice(torch::DeviceType device) {}
 
 void FramesObstacle::setFrames(std::map<double, Affine3d> frames) {
   frames_ = std::move(frames);

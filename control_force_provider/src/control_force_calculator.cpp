@@ -31,18 +31,18 @@ boost::shared_ptr<ControlForceCalculator> ControlForceCalculator::createFromConf
 }
 
 Environment::Environment(const YAML::Node& config, int batch_size, torch::DeviceType device)
-    : ee_position_(torch::zeros({batch_size, 3}, utils::getTensorOptions(torch::kCPU))),
-      ee_rotation_(torch::zeros({batch_size, 4}, utils::getTensorOptions(torch::kCPU))),
-      ee_velocity_(torch::zeros({batch_size, 3}, utils::getTensorOptions(torch::kCPU))),
-      rcm_(torch::zeros(3, utils::getTensorOptions(device_))),
-      goal_(torch::zeros({batch_size, 3}, utils::getTensorOptions(torch::kCPU))),
-      start_time_(torch::zeros({batch_size, 1}, utils::getTensorOptions(torch::kCPU))),
+    : ee_position_(torch::zeros({batch_size, 3}, utils::getTensorOptions(device))),
+      ee_rotation_(torch::zeros({batch_size, 4}, utils::getTensorOptions(device))),
+      ee_velocity_(torch::zeros({batch_size, 3}, utils::getTensorOptions(device))),
+      rcm_(torch::zeros(3, utils::getTensorOptions(device))),
+      goal_(torch::zeros({batch_size, 3}, utils::getTensorOptions(device))),
+      start_time_(torch::zeros({batch_size, 1}, utils::getTensorOptions(device))),
       last_update_(0),
-      elapsed_time_(torch::zeros({batch_size, 1}, utils::getTensorOptions(torch::kCPU))),
+      elapsed_time_(torch::zeros({batch_size, 1}, utils::getTensorOptions(device))),
       workspace_bb_origin_(utils::createTensor(utils::getConfigValue<double>(config, "workspace_bb"), 0, 3, device)),
       workspace_bb_dims_(utils::createTensor(utils::getConfigValue<double>(config, "workspace_bb"), 3, 6, device)),
       max_force_(utils::getConfigValue<double>(config, "max_force")[0]),
-      offset_(torch::zeros({1, 3}, utils::getTensorOptions(device_))),
+      offset_(torch::zeros({1, 3}, utils::getTensorOptions(device))),
       device_(device) {
   std::string data_path;
   obstacles_ = Obstacle::createFromConfig(config, data_path, batch_size, device_);
@@ -50,16 +50,16 @@ Environment::Environment(const YAML::Node& config, int batch_size, torch::Device
   int reference_obstacle = -1;
   for (auto& obstacle : obstacles_) {
     ob_rcms_.push_back(obstacle->getRCM());
-    ob_positions_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(torch::kCPU)));
-    ob_directions_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(torch::kCPU)));
-    ob_rotations_.push_back(torch::zeros({batch_size, 4}, utils::getTensorOptions(torch::kCPU)));
-    ob_velocities_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(torch::kCPU)));
-    points_on_l1_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(torch::kCPU)));
-    points_on_l2_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(torch::kCPU)));
-    collision_distances_.push_back(torch::zeros({batch_size, 1}, utils::getTensorOptions(torch::kCPU)));
+    ob_positions_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
+    ob_directions_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
+    ob_rotations_.push_back(torch::zeros({batch_size, 4}, utils::getTensorOptions(device_)));
+    ob_velocities_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
+    points_on_l1_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
+    points_on_l2_.push_back(torch::zeros({batch_size, 3}, utils::getTensorOptions(device_)));
+    collision_distances_.push_back(torch::zeros({batch_size, 1}, utils::getTensorOptions(device_)));
     boost::shared_ptr<FramesObstacle> frames_obstacle = boost::dynamic_pointer_cast<FramesObstacle>(obstacle);
     if (frames_obstacle) {
-      if (frames_obstacle->getRCM().equal(torch::zeros(3, utils::getTensorOptions(torch::kCPU)))) {
+      if (frames_obstacle->getRCM().equal(torch::zeros(3, utils::getTensorOptions(device_)))) {
         if (reference_obstacle == -1)
           reference_obstacle = frames_obstacles.size();
         else
@@ -71,59 +71,122 @@ Environment::Environment(const YAML::Node& config, int batch_size, torch::Device
   obstacle_loader_ = boost::make_shared<ObstacleLoader>(frames_obstacles, data_path, reference_obstacle);
 }
 
+void Environment::setDevice(torch::DeviceType device) {
+  {
+    boost::lock_guard<boost::shared_mutex> lock(ee_pos_mtx);
+    ee_position_ = ee_position_.to(device);
+  }
+  {
+    boost::lock_guard<boost::shared_mutex> lock(ee_rot_mtx);
+    ee_rotation_ = ee_rotation_.to(device);
+  }
+  {
+    boost::lock_guard<boost::shared_mutex> lock(ee_vel_mtx);
+    ee_velocity_ = ee_velocity_.to(device);
+  }
+  {
+    boost::lock_guard<boost::shared_mutex> lock(ee_vel_mtx);
+    rcm_ = rcm_.to(device);
+  }
+  {
+    boost::lock_guard<boost::shared_mutex> lock(goal_mtx);
+    goal_ = goal_.to(device);
+  }
+  {
+    boost::lock_guard<boost::shared_mutex> lock(bb_or_mtx);
+    workspace_bb_origin_ = workspace_bb_origin_.to(device);
+  }
+  workspace_bb_dims_ = workspace_bb_dims_.to(device);
+  for (size_t i = 0; i < obstacles_.size(); i++) {
+    {
+      boost::lock_guard<boost::shared_mutex> lock(ob_pos_mtx);
+      ob_positions_[i] = ob_positions_[i].to(device);
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(ob_dir_mtx);
+      ob_directions_[i] = ob_directions_[i].to(device);
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(ob_rot_mtx);
+      ob_rotations_[i] = ob_rotations_[i].to(device);
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(ob_vel_mtx);
+      ob_velocities_[i] = ob_velocities_[i].to(device);
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(ob_rcm_mtx);
+      ob_rcms_[i] = ob_rcms_[i].to(device);
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(l1_mtx);
+      points_on_l1_[i] = points_on_l1_[i].to(device);
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(l2_mtx);
+      points_on_l2_[i] = points_on_l2_[i].to(device);
+    }
+    {
+      boost::lock_guard<boost::shared_mutex> lock(cd_mtx);
+      collision_distances_[i] = collision_distances_[i].to(device);
+    }
+    obstacles_[i]->setDevice(device);
+  }
+  {
+    boost::lock_guard<boost::shared_mutex> lock(offset_mtx);
+    offset_ = offset_.to(device);
+  }
+  device_ = device;
+}
+
 void Environment::update(const torch::Tensor& ee_position) {
   torch::Tensor ee_position_dev = ee_position.to(device_) - offset_;
   double now = Time::now();
   double time_since_last_update = now - last_update_;
   if (time_since_last_update > 0) {
     boost::lock_guard<boost::shared_mutex> lock(ee_vel_mtx);
-    ee_velocity_ = ((ee_position_dev - ee_position_.to(device_)) / time_since_last_update).cpu();
+    ee_velocity_ = ((ee_position_dev - ee_position_) / time_since_last_update);
   }
   last_update_ = now;
   {
     boost::lock_guard<boost::shared_mutex> lock(ee_pos_mtx);
-    ee_position_ = ee_position_dev.cpu();
+    ee_position_ = ee_position_dev;
   }
   {
     boost::lock_guard<boost::shared_mutex> lock(ee_rot_mtx);
-    ee_rotation_ = utils::zRotation(rcm_ - offset_, ee_position_dev);
+    ee_rotation_ = utils::zRotation(rcm_ - offset_, ee_position_);
   }
-  elapsed_time_ = (now - start_time_.to(device_)).cpu();
-  std::vector<torch::Tensor> ob_rcms_dev;
-  std::vector<torch::Tensor> ob_positions_dev;
+  elapsed_time_ = (now - start_time_);
   for (size_t i = 0; i < obstacles_.size(); i++) {
-    torch::Tensor ob_position_dev = obstacles_[i]->getPosition().to(device_);
+    torch::Tensor ob_position_dev = obstacles_[i]->getPosition();
     ob_position_dev -= offset_;
-    ob_positions_dev.push_back(ob_position_dev);
     {
       boost::lock_guard<boost::shared_mutex> lock(ob_vel_mtx);
-      ob_velocities_[i] = (ob_position_dev - ob_positions_[i].to(device_)).cpu();
+      ob_velocities_[i] = ob_position_dev - ob_positions_[i];
     }
     {
       boost::lock_guard<boost::shared_mutex> lock(ob_pos_mtx);
-      ob_positions_[i] = ob_position_dev.cpu();
+      ob_positions_[i] = ob_position_dev;
     }
-    torch::Tensor ob_rcm_dev = (obstacles_[i]->getRCM().to(device_) - offset_);
-    ob_rcms_dev.push_back(ob_rcm_dev);
     {
       boost::lock_guard<boost::shared_mutex> lock(ob_rcm_mtx);
-      ob_rcms_[i] = ob_rcm_dev.cpu();
+      ob_rcms_[i] = obstacles_[i]->getRCM() - offset_;
     }
     {
       boost::lock_guard<boost::shared_mutex> lock(ob_dir_mtx);
-      ob_directions_[i] = (ob_rcm_dev - ob_position_dev).cpu();
+      ob_directions_[i] = ob_rcms_[i] - ob_positions_[i];
     }
     {
       boost::lock_guard<boost::shared_mutex> lock(ob_rot_mtx);
-      ob_rotations_[i] = utils::zRotation(ob_rcm_dev, ob_position_dev).cpu();
+      ob_rotations_[i] = utils::zRotation(ob_rcms_[i], ob_position_dev);
     }
   }
-  torch::Tensor a1 = rcm_.to(device_);
+  torch::Tensor a1 = rcm_;
   torch::Tensor b1 = ee_position_dev - a1;
   for (size_t i = 0; i < obstacles_.size(); i++) {
     torch::Tensor t, s = torch::empty(ee_position_.size(0), utils::getTensorOptions(device_));
-    const torch::Tensor& a2 = ob_rcms_dev[i];
-    torch::Tensor b2 = ob_positions_dev[i] - a2;
+    const torch::Tensor& a2 = ob_rcms_[i];
+    torch::Tensor b2 = ob_positions_[i] - a2;
     utils::shortestLine(a1, b1, a2, b2, t, s);
     t = torch::clamp(t, 0, 1);
     s = torch::clamp(s, 0, 1);
@@ -149,12 +212,11 @@ void Environment::clipForce(torch::Tensor& force) {
   torch::Tensor magnitude = utils::norm(force_dev);
   torch::Tensor mask = magnitude > max_force_;
   force_dev = torch::where(mask, force / magnitude * max_force_, force_dev);
-  torch::Tensor ee_position_dev = ee_position_.to(device_);
-  torch::Tensor next_pos = ee_position_dev + force_dev;
+  torch::Tensor next_pos = ee_position_ + force_dev;
   torch::Tensor distance_to_wall = torch::full_like(force_dev, INFINITY);
   torch::Tensor next_distance_to_wall = torch::full_like(force_dev, INFINITY);
-  distance_to_wall = torch::min(distance_to_wall, ee_position_dev - workspace_bb_origin_);
-  distance_to_wall = torch::min(distance_to_wall, workspace_bb_origin_ + workspace_bb_dims_ - ee_position_dev);
+  distance_to_wall = torch::min(distance_to_wall, ee_position_ - workspace_bb_origin_);
+  distance_to_wall = torch::min(distance_to_wall, workspace_bb_origin_ + workspace_bb_dims_ - ee_position_);
   distance_to_wall = std::get<0>(torch::min(distance_to_wall, -1, true));
   next_distance_to_wall = torch::min(next_distance_to_wall, next_pos - workspace_bb_origin_);
   next_distance_to_wall = torch::min(next_distance_to_wall, workspace_bb_origin_ + workspace_bb_dims_ - next_pos);
@@ -162,7 +224,7 @@ void Environment::clipForce(torch::Tensor& force) {
   next_pos = torch::clamp(next_pos, workspace_bb_origin_, workspace_bb_origin_ + workspace_bb_dims_);
   mask = next_distance_to_wall < distance_to_wall;
   if (torch::any(mask).item().toBool()) {
-    force_dev = torch::where(mask, next_pos - ee_position_dev, force_dev);
+    force_dev = torch::where(mask, next_pos - ee_position_, force_dev);
     mask = torch::logical_and(mask, distance_to_wall > 0);
     if (torch::any(mask).item().toBool()) {
       torch::Tensor max_magnitude = distance_to_wall * workspace_bb_stopping_strength;
@@ -184,7 +246,7 @@ const torch::Tensor& Environment::getRCM() const { return rcm_; }
 boost::shared_lock_guard<boost::shared_mutex> Environment::getRCMLock() { return boost::shared_lock_guard<boost::shared_mutex>(rcm_mtx); }
 void Environment::setRCM(const torch::Tensor& rcm) { rcm_ = rcm.to(device_) - offset_; }
 const torch::Tensor& Environment::getGoal() const { return goal_; }
-void Environment::setGoal(const torch::Tensor& goal) { goal_ = (goal.to(device_) - offset_).cpu(); }
+void Environment::setGoal(const torch::Tensor& goal) { goal_ = goal.to(device_) - offset_; }
 boost::shared_lock_guard<boost::shared_mutex> Environment::getGoalLock() { return boost::shared_lock_guard<boost::shared_mutex>(goal_mtx); }
 const torch::Tensor& Environment::getWorkspaceBbOrigin() const { return workspace_bb_origin_; }
 boost::shared_lock_guard<boost::shared_mutex> Environment::getWorkspaceBbOriginLock() { return boost::shared_lock_guard<boost::shared_mutex>(bb_or_mtx); }
@@ -212,7 +274,7 @@ void Environment::setOffset(const torch::Tensor& offset) {
   torch::Tensor translation = offset_ - offset_dev;
   workspace_bb_origin_ += translation;
   rcm_ += translation;
-  goal_ = (goal_.to(device_) + translation).cpu();
+  goal_ = goal_ + translation;
   offset_ = offset_dev;
 }
 const torch::Tensor& Environment::getWorkspaceBbDims() const { return workspace_bb_dims_; }
@@ -220,9 +282,8 @@ double Environment::getMaxForce() const { return max_force_.toFloat(); }
 const torch::Tensor& Environment::getElapsedTime() const { return elapsed_time_; }
 const torch::Tensor& Environment::getStartTime() const { return start_time_; }
 void Environment::setStartTime(const torch::Tensor& startTime) {
-  torch::Tensor start_time_dev = startTime.to(device_);
-  start_time_ = startTime.cpu();
-  elapsed_time_ = (Time::now() - start_time_dev).cpu();
+  start_time_ = startTime.to(device_);
+  elapsed_time_ = Time::now() - start_time_;
 }
 const std::vector<boost::shared_ptr<Obstacle>>& Environment::getObstacles() const { return obstacles_; }
 const boost::shared_ptr<ObstacleLoader>& Environment::getObstacleLoader() const { return obstacle_loader_; }
@@ -262,8 +323,7 @@ PotentialFieldMethod::PotentialFieldMethod(const YAML::Node& config, boost::shar
 
 void PotentialFieldMethod::getForceImpl(torch::Tensor& force) {
   // attractive vector
-  torch::Tensor ee_position_dev = env->getEePosition().to(device_);
-  torch::Tensor attractive_vector = env->getGoal().to(device_) - ee_position_dev;
+  torch::Tensor attractive_vector = env->getGoal() - env->getEePosition();
   torch::Tensor ee_to_goal_distance = utils::norm(attractive_vector);
   torch::Tensor is_linear_attraction = ee_to_goal_distance > attraction_distance_;
   torch::Tensor smoothing_factor = torch::where(is_linear_attraction, 0.1, 1);
@@ -271,15 +331,13 @@ void PotentialFieldMethod::getForceImpl(torch::Tensor& force) {
   attractive_vector *= attraction_strength_ * smoothing_factor;
   // repulsive vector
   torch::Tensor repulsive_vector = torch::zeros_like(force);
-  torch::Tensor rcm_dev = env->getRCM().to(device_);
-  const torch::Tensor& a1 = rcm_dev;
-  torch::Tensor b1 = ee_position_dev - a1;
+  const torch::Tensor& a1 = env->getRCM();
+  torch::Tensor b1 = env->getEePosition() - a1;
   torch::Tensor l1_length = utils::norm(b1);
   torch::Tensor min_l2_to_l1_distance = torch::full_like(l1_length, repulsion_distance_);
   for (size_t i = 0; i < env->getObPositions().size(); i++) {
-    torch::Tensor point_on_l1_dev = env->getPointsOnL1()[i].to(device_);
-    torch::Tensor t = utils::norm(point_on_l1_dev - rcm_dev) / l1_length;
-    torch::Tensor l2_to_l1 = point_on_l1_dev - env->getPointsOnL2()[i].to(device_);
+    torch::Tensor t = utils::norm(env->getPointsOnL1()[i] - env->getRCM()) / l1_length;
+    torch::Tensor l2_to_l1 = env->getPointsOnL1()[i] - env->getPointsOnL2()[i];
     torch::Tensor l2_to_l1_distance = utils::norm(l2_to_l1);
     torch::Tensor is_repulsing = (l2_to_l1_distance < repulsion_distance_).expand({-1, 3});
     repulsive_vector += torch::where(is_repulsing,
@@ -290,11 +348,11 @@ void PotentialFieldMethod::getForceImpl(torch::Tensor& force) {
   }
   torch::Tensor is_repulsing = min_l2_to_l1_distance < repulsion_distance_;
   // avoid positive z-translation
-  torch::Tensor l1_new = ee_position_dev + repulsive_vector - a1;
+  torch::Tensor l1_new = env->getEePosition() + repulsive_vector - a1;
   torch::Tensor l1_new_length = utils::norm(l1_new);
   torch::Tensor positive_z_translation = l1_length - l1_new_length < 0;
   l1_new *= torch::where(positive_z_translation, l1_length / l1_new_length, 1);
-  repulsive_vector = torch::where(is_repulsing.logical_and(positive_z_translation), a1 + l1_new - ee_position_dev, repulsive_vector);
+  repulsive_vector = torch::where(is_repulsing.logical_and(positive_z_translation), a1 + l1_new - env->getEePosition(), repulsive_vector);
 
   // add negative z-translation
   repulsive_vector -= torch::where(is_repulsing,
@@ -302,7 +360,7 @@ void PotentialFieldMethod::getForceImpl(torch::Tensor& force) {
                                        (min_l2_to_l1_distance * min_l2_to_l1_distance) * (b1 / l1_length),
                                    0);
   // prevent pushing the end effector too close to the RCM
-  repulsive_vector = torch::where((utils::norm((ee_position_dev + repulsive_vector - a1)) < min_rcm_distance_).expand({-1, 3}), 0, repulsive_vector);
+  repulsive_vector = torch::where((utils::norm((env->getEePosition() + repulsive_vector - a1)) < min_rcm_distance_).expand({-1, 3}), 0, repulsive_vector);
   force = repulsive_vector;
   if (!repulsion_only_) force += attractive_vector;
 }
@@ -397,12 +455,15 @@ EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacle
       goal_bb_dims(utils::createTensor(utils::getConfigValue<double>(config, "goal_bb"), 3, 6, device)),
       device_(device) {}
 
+void EpisodeContext::setDevice(torch::DeviceType device) {
+  start_ = start_.to(device);
+  goal_ = goal_.to(device);
+}
+
 void EpisodeContext::generateEpisode(const torch::Tensor& mask) {
   torch::Tensor mask_ = mask.to(device_);
-  torch::Tensor start_dev = start_.to(device_);
-  torch::Tensor goal_dev = goal_.to(device_);
-  start_ = torch::where(mask_, start_bb_origin + start_bb_dims * torch::rand_like(start_dev), start_dev);
-  goal_ = torch::where(mask_, goal_bb_origin + goal_bb_dims * torch::rand_like(goal_dev), goal_dev);
+  start_ = torch::where(mask_, start_bb_origin + start_bb_dims * torch::rand_like(start_), start_);
+  goal_ = torch::where(mask_, goal_bb_origin + goal_bb_dims * torch::rand_like(start_), start_);
   obstacle_loader_->loadNext();
 }
 
@@ -437,6 +498,8 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(const YAML::Node& config,
   setGoal(episode_context_->getStart());
   initializing_episode = true;
 }
+
+void ReinforcementLearningAgent::copyToDevice(torch::DeviceType device) {}
 
 torch::Tensor ReinforcementLearningAgent::getAction() {
   if (train) {

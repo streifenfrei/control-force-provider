@@ -22,6 +22,7 @@ class Obstacle {
   const std::string id_;
   torch::DeviceType device_;
   torch::Tensor rcm_;
+  virtual void copyToDevice(torch::DeviceType device) = 0;
   virtual torch::Tensor getPositionAt(torch::Tensor time) = 0;
 
  public:
@@ -30,6 +31,7 @@ class Obstacle {
         id_(id),
         rcm_(torch::zeros(3, utils::getTensorOptions(device))),
         device_(device){};
+  void setDevice(torch::DeviceType device);
   void reset(const torch::Tensor& mask, const torch::Tensor& offset);
   void reset(const torch::Tensor& offset);
   torch::Tensor getPosition();
@@ -43,6 +45,7 @@ class Obstacle {
 
 class DummyObstacle : public Obstacle {
  protected:
+  void copyToDevice(torch::DeviceType device) override{};
   torch::Tensor getPositionAt(torch::Tensor time) override { return torch::zeros({time.size(0), 3}, utils::getTensorOptions(device_)); };
 
  public:
@@ -60,6 +63,7 @@ class WaypointsObstacle : public Obstacle {
   double speed_;  // m/s
 
  protected:
+  void copyToDevice(torch::DeviceType device) override;
   torch::Tensor getPositionAt(torch::Tensor time) override;
 
  public:
@@ -73,6 +77,7 @@ class FramesObstacle : public Obstacle {
   std::map<double, Eigen::Affine3d>::iterator iter_;
 
  protected:
+  void copyToDevice(torch::DeviceType device) override;
   torch::Tensor getPositionAt(torch::Tensor time) override;
 
  public:
