@@ -42,7 +42,7 @@ class MonteCarloContext(DiscreteRLContext):
 
     def _update_impl(self, state_dict, reward):
         if self.train:
-            if self.last_state_dict is not None:
+            if len(self.last_state_dict):
                 self.state_stack.append(state_dict["state"])
                 self.actions_stack.append(self.action_index)
                 was_exploring = self.real_action_index != self.action_index

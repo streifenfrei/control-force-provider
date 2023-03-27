@@ -133,7 +133,7 @@ class A2CContext(DiscreteRLContext):
 
     def _update_impl(self, state_dict, reward):
         if self.train:
-            if self.last_state_dict is not None:
+            if len(self.last_state_dict):
                 next_state = torch.where(state_dict["is_terminal"].to(DEVICE).expand(-1, state_dict["state"].size(-1)), torch.nan, state_dict["state"].to(DEVICE))
                 self.replay_buffer.push(self.last_state_dict["state"], self.last_state_dict["robot_velocity"], self.action_index, next_state, reward, self.exploration_probs.gather(-1, self.action_index))
                 # hindsight experience replay

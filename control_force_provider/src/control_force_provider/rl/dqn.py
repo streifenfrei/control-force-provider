@@ -41,6 +41,8 @@ class ReplayBuffer:
                 yield self.transition(*args)
                 start_index += batch_size
                 end_index = min(len(self) - 1, end_index + batch_size)
+                if end_index - start_index == 1:
+                    return
         return generator
 
     def __len__(self):
@@ -102,7 +104,7 @@ class DQNContext(DiscreteRLContext):
 
     def _update_impl(self, state_dict, reward):
         if self.train:
-            if self.last_state_dict is not None:
+            if len(self.last_state_dict):
                 next_state = torch.where(state_dict["is_terminal"].expand(-1, state_dict["state"].size(-1)), torch.nan, state_dict["state"])
                 self.replay_buffer.push(self.last_state_dict["state"], self.last_state_dict["robot_velocity"], self.action_index, next_state, reward)
                 # hindsight experience replay
@@ -230,7 +232,7 @@ class DQNNAFContext(ContinuesRLContext):
 
     def _update_impl(self, state_dict, reward):
         if self.train:
-            if self.last_state_dict is not None:
+            if len(self.last_state_dict):
                 next_state = torch.where(state_dict["is_terminal"].expand(-1, state_dict["state"].size(-1)), torch.nan, state_dict["state"])
                 self.replay_buffer.push(self.last_state_dict["state"], self.last_state_dict["robot_velocity"], self.action, next_state, reward)
 

@@ -8,6 +8,7 @@ from enum import Enum
 from abc import ABC, abstractmethod
 from torch.utils.tensorboard import SummaryWriter
 from collections import namedtuple, defaultdict, deque
+from threading import Thread, Lock
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EPSILON = 1e-9
@@ -95,7 +96,7 @@ class RewardFunction:
 
     def __call__(self, state_dict, last_state_dict, mask):
         goal = state_dict["goal"]
-        if last_state_dict is None:
+        if not len(last_state_dict):
             out = torch.full([goal.size(0), 1], torch.nan, device=DEVICE)
             return out, out, out, out
         #robot_position = state_dict["robot_position"]
@@ -104,12 +105,12 @@ class RewardFunction:
         #distance_to_goal = torch.linalg.norm(goal - robot_position, dim=-1).unsqueeze(-1)
         # motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
         collision_penalty = torch.where(mask, 0, torch.nan)
-        collision_penalty -= torch.where(state_dict["collided"].to(DEVICE), self.max_penalty, 0)
+        collision_penalty -= torch.where(state_dict["collided"], self.max_penalty, 0)
         motion_reward = torch.where(mask, torch.full_like(collision_penalty, self.motion_penalty), torch.nan)
         #for collision_distance in collision_distances:
         #    collision_penalty = -torch.where(collision_distance.isnan(), 0, collision_penalty + (self.dc / (collision_distance + EPSILON)) ** self.mc)
         #collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
-        goal_reward = torch.where(mask, torch.where(state_dict["reached_goal"].to(DEVICE), self.rg, torch.zeros_like(collision_penalty)), torch.nan)
+        goal_reward = torch.where(mask, torch.where(state_dict["reached_goal"], self.rg, torch.zeros_like(collision_penalty)), torch.nan)
         #if self.max_distance is None:
         #    self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
         #timeout_penalty = self.min_timeout_penalty + ((distance_to_goal / self.max_distance) * self.timeout_penalty_range)
@@ -169,6 +170,50 @@ class ActionSpace:
 
     def __len__(self):
         return len(self.action_vectors)
+
+
+class SmartStateDict():
+    def __init__(self):
+        self.data = {}
+        self.access_counts = defaultdict(int)
+
+        def factory():
+            return deque(maxlen=10)
+        self.last_access_counts = defaultdict(factory)
+        self.approx_max_access_counts = defaultdict(int)
+        self.locks = defaultdict(Lock)
+
+    def _copy_sync(self, key, device):
+        with self.locks[key]:
+            self.data[key] = self.data[key].to(device)
+
+    def _copy_async(self, key, device):
+        Thread(target=SmartStateDict._copy_sync, args=[self, key, device]).start()
+
+    def update_data(self, data):
+        self.data = data
+        for key in self.data:
+            self.last_access_counts[key].append(self.access_counts[key])
+            self.approx_max_access_counts[key] = int(sum(self.last_access_counts[key]) / len(self.last_access_counts[key]))
+        self.access_counts = defaultdict(int)
+
+    def load(self, device=None):
+        for key in self.data:
+            if device is None:
+                device = "cpu" if self.approx_max_access_counts[key] == 0 else DEVICE
+            self._copy_async(key, device)
+
+    def __getitem__(self, key):
+        with self.locks[key]:
+            if self.data[key].device != DEVICE:
+                self._copy_sync(key, DEVICE)
+            self.access_counts[key] += 1
+            if self.access_counts[key] >= self.approx_max_access_counts[key]:
+                self._copy_async(key, "cpu")
+            return self.data[key]
+
+    def __len__(self):
+        return len(self.data)
 
 
 class RLContext(ABC):
@@ -242,7 +287,8 @@ class RLContext(ABC):
         self.episode_accumulators_mean = {}
         self.reward_function = reward_function
         self.state_augmenter = state_augmenter
-        self.last_state_dict = None
+        self.state_dict = SmartStateDict()
+        self.last_state_dict = SmartStateDict()
         self.action = None
         self.epoch = 0
         self.episode = torch.zeros((robot_batch, 1))
@@ -330,15 +376,15 @@ class RLContext(ABC):
 
     def create_her_transitions(self, state_dict, action, next_state_dict, reward, single_transition=False):
         if single_transition:
-            mask = next_state_dict["collided"].to(DEVICE).logical_not()
+            mask = next_state_dict["collided"].logical_not()
             if mask.any():
-                states = state_dict["state"].to(DEVICE)[mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
+                states = state_dict["state"][mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
                 actions = action[mask].reshape([-1, 1])
-                velocities = state_dict["robot_velocity"].to(DEVICE)[mask.expand([-1, 3])].reshape([-1, 3])
-                next_states = next_state_dict["state"].to(DEVICE)[mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
+                velocities = state_dict["robot_velocity"][mask.expand([-1, 3])].reshape([-1, 3])
+                next_states = next_state_dict["state"][mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
                 rewards = torch.full_like(actions, self.her_reward)
-                goals = next_state_dict["robot_position"].to(DEVICE)[mask.expand([-1, 3])].reshape([-1, 3])
-                noise = self.her_noise_dist.sample([goals.size(0)]).to(DEVICE)
+                goals = next_state_dict["robot_position"][mask.expand([-1, 3])].reshape([-1, 3])
+                noise = self.her_noise_dist.sample([goals.size(0)])
                 noise_magnitudes = torch.linalg.vector_norm(noise, dim=-1, keepdims=True)
                 noise /= noise_magnitudes
                 noise *= torch.minimum(noise_magnitudes, torch.tensor(self.goal_reached_threshold_distance))
@@ -392,12 +438,16 @@ class RLContext(ABC):
             return None
 
     def update(self, state_dict):
+        self.state_dict.update_data(state_dict)
+        state_dict = self.state_dict
+        state_dict.load()
+        self.last_state_dict.load()
         reward = None
-        is_terminal = state_dict["is_terminal"].to(DEVICE)
+        is_terminal = state_dict["is_terminal"]
         if self.train:
             if self.max_distance is None:
                 self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
-            goal = state_dict["goal"].to(DEVICE)
+            goal = state_dict["goal"]
             if self.goal is None:
                 self.goal = goal
             # check for finished episodes
@@ -424,13 +474,14 @@ class RLContext(ABC):
         # do the update
         self._update_impl(state_dict, reward)
         self._post_update(state_dict)
-        self.last_state_dict = self._copy_state_dict(state_dict)
+        self.last_state_dict.update_data(state_dict.data)
+        self.last_state_dict.load("cpu")
         if self.evaluating:
             acc_lengths_dev = self.acc_lengths.to(DEVICE) + 1
             self.evaluation_epoch += 1
-            reached_goal_dev = state_dict["reached_goal"].to(DEVICE)
-            collided_dev = state_dict["collided"].to(DEVICE)
-            is_timeout_dev = state_dict["is_timeout"].to(DEVICE)
+            reached_goal_dev = state_dict["reached_goal"]
+            collided_dev = state_dict["collided"]
+            is_timeout_dev = state_dict["is_timeout"]
             self.successes.append(reached_goal_dev.sum().item())
             self.collisions.append(collided_dev.sum().item())
             self.timeouts.append(is_timeout_dev.sum().item())
@@ -555,7 +606,7 @@ class DiscreteRLContext(RLContext):
 
     def _post_update(self, state_dict):
         if self.train:
-            self.action_space.update_goal_vector(state_dict["goal"].to(DEVICE) - state_dict["robot_position"].to(DEVICE))
+            self.action_space.update_goal_vector(state_dict["goal"] - state_dict["robot_position"])
             # explore
             self.exploration_probs = self.get_exploration_probs(self.action_index, state_dict["robot_velocity"])
             if "success_ratio" in self.metrics:
