@@ -487,7 +487,7 @@ class RLContext(ABC):
             self.timeouts.append(is_timeout_dev.sum().item())
             self.episodes_passed.append(is_terminal.sum().item())
             self.episodes_lengths.append(acc_lengths_dev[is_terminal].sum().item())
-            self.acc_lengths = torch.where(is_terminal, 0, self.acc_lengths)
+            acc_lengths_dev = torch.where(is_terminal, 0, acc_lengths_dev)
             if self.evaluation_epoch != 0 and self.evaluation_epoch % self.evaluation_duration == 0:
                 self.metrics = {}
                 episodes_passed = sum(list(self.episodes_passed)[-self.log_interval:])
@@ -513,7 +513,6 @@ class RLContext(ABC):
                     string += f"return: {mean_return}"
                     print("\r", end="")
                     rospy.loginfo(string)
-                    print(f"0%\t", end="")
                 self.evaluation_epoch = 0
                 self.evaluating = False
                 self.train = True
@@ -534,9 +533,11 @@ class RLContext(ABC):
                 if progress == 0:
                     self.evaluating = True
                     self.train = False
+                    print("\rEvaluating...", end="")
+                else:
+                    print(f"\r{100 * progress / self.log_interval}%\t", end="")
                 if self.epoch % self.save_rate == 0:
                     self.save()
-                print(f"\r{100 * progress / self.log_interval}%\t", end="")
         return self.action
 
     def warn(self, string):

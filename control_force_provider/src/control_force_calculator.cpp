@@ -463,7 +463,7 @@ void EpisodeContext::setDevice(torch::DeviceType device) {
 void EpisodeContext::generateEpisode(const torch::Tensor& mask) {
   torch::Tensor mask_ = mask.to(device_);
   start_ = torch::where(mask_, start_bb_origin + start_bb_dims * torch::rand_like(start_), start_);
-  goal_ = torch::where(mask_, goal_bb_origin + goal_bb_dims * torch::rand_like(start_), start_);
+  goal_ = torch::where(mask_, goal_bb_origin + goal_bb_dims * torch::rand_like(start_), goal_);
   obstacle_loader_->loadNext();
 }
 
