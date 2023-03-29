@@ -164,8 +164,8 @@ class ActionSpace:
         index = index.to(DEVICE)
         index = index.expand([-1, 3])
         actions = torch.gather(self.action_space_tensor, 0, index)
-        for i in range(len(self.goal_vectors)):
-            actions = torch.where(index == self.goal_vectors_index_start + i, self.goal_vectors[i], actions)
+        # for i in range(len(self.goal_vectors)):
+        #    actions = torch.where(index == self.goal_vectors_index_start + i, self.goal_vectors[i], actions)
         return actions
 
     def __len__(self):

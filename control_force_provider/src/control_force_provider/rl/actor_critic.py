@@ -109,7 +109,7 @@ class A2CContext(DiscreteRLContext):
                 weights = self.get_correction_weight(action_probs, exploration_prob_batch).detach()
                 weights_sum = weights.sum()
                 # loss calculation
-                critic_loss = torch.linalg.norm(advantage * weights) / weights_sum
+                critic_loss = 0.5 * ((advantage.pow(2) * weights).sum() / weights_sum)
                 actor_loss = torch.log(action_probs) * advantage.detach() * weights
                 actor_loss = -actor_loss.sum() / weights_sum
                 if not critic_loss.isnan().any():
