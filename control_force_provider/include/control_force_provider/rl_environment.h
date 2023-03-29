@@ -34,7 +34,7 @@ class TorchRLEnvironment : ROSNode {
   void copyToDevice(torch::DeviceType device);
 
  public:
-  TorchRLEnvironment(const std::string& config_file, std::array<float, 3> rcm, bool force_cpu = false, bool visualize = false);
+  TorchRLEnvironment(const std::string& config_file, std::array<float, 3> rcm, double goal_distance, bool force_cpu = false, bool visualize = false);
   std::map<std::string, torch::Tensor> observe(const torch::Tensor& actions);
   void setCustomMarker(const std::string& key, const torch::Tensor& marker);
 };

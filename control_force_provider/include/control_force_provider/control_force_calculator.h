@@ -213,12 +213,15 @@ class EpisodeContext {
   const torch::Tensor start_bb_dims;
   const torch::Tensor goal_bb_origin;
   const torch::Tensor goal_bb_dims;
+  const torch::Tensor goal_bb_end;
+  double goal_distance;
+  const double goal_distance_increase;
   const double begin_max_offset_;
   friend class Visualizer;
 
  public:
-  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles_, boost::shared_ptr<ObstacleLoader> obstacle_loader, const YAML::Node& config,
-                 unsigned int batch_size = 1, torch::DeviceType device = torch::kCPU);
+  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles_, boost::shared_ptr<ObstacleLoader> obstacle_loader, double goal_distance_,
+                 const YAML::Node& config, unsigned int batch_size = 1, torch::DeviceType device = torch::kCPU);
   void setDevice(torch::DeviceType device);
   void generateEpisode(const torch::Tensor& mask);
   void generateEpisode();
@@ -226,6 +229,7 @@ class EpisodeContext {
   void startEpisode();
   const torch::Tensor& getStart() const { return start_; };
   const torch::Tensor& getGoal() const { return goal_; };
+  double getGoalDistance() const { return goal_distance; };
 };
 
 class ReinforcementLearningAgent : public ControlForceCalculator {

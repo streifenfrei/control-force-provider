@@ -9,14 +9,14 @@ using namespace control_force_provider;
 using namespace torch;
 
 namespace control_force_provider::backend {
-TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::array<float, 3> rcm, bool force_cpu, bool visualize)
+TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::array<float, 3> rcm, double goal_distance, bool force_cpu, bool visualize)
     : ROSNode("cfp_rl_environment"), device_(force_cpu || !torch::hasCUDA() ? torch::kCPU : torch::kCUDA) {
   YAML::Node config = YAML::LoadFile(config_file);
   Time::setType<ManualTime>();
   time_ = boost::static_pointer_cast<ManualTime>(Time::getInstance());
   batch_size_ = utils::getConfigValue<int>(config["rl"], "robot_batch")[0];
   env_ = boost::make_shared<Environment>(config, batch_size_, device_);
-  episode_context_ = boost::make_shared<EpisodeContext>(env_->getObstacles(), env_->getObstacleLoader(), config["rl"], batch_size_, device_);
+  episode_context_ = boost::make_shared<EpisodeContext>(env_->getObstacles(), env_->getObstacleLoader(), goal_distance, config["rl"], batch_size_, device_);
   episode_context_->generateEpisode();
   episode_context_->startEpisode();
   state_provider_ = boost::make_shared<StateProvider>(*env_, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0], device_);
@@ -69,6 +69,7 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::getStateDict() {
   out["is_timeout"] = is_timeout_.clone();
   out["workspace_bb_origin"] = env_->getWorkspaceBbOrigin().clone();
   out["workspace_bb_dims"] = env_->getWorkspaceBbDims().clone();
+  out["goal_distance"] = torch::tensor(episode_context_->getGoalDistance());
   return out;
 }
 
@@ -120,9 +121,9 @@ void TorchRLEnvironment::setCustomMarker(const std::string& key, const torch::Te
 
 PYBIND11_MODULE(native, module) {
   py::class_<TorchRLEnvironment>(module, "RLEnvironment")
-      .def(py::init<std::string, std::array<float, 3>>())
-      .def(py::init<std::string, std::array<float, 3>, bool>())
-      .def(py::init<std::string, std::array<float, 3>, bool, bool>())
+      .def(py::init<std::string, std::array<float, 3>, double>())
+      .def(py::init<std::string, std::array<float, 3>, double, bool>())
+      .def(py::init<std::string, std::array<float, 3>, double, bool, bool>())
       .def("observe", &TorchRLEnvironment::observe)
       .def("set_custom_marker", &TorchRLEnvironment::setCustomMarker);
 }

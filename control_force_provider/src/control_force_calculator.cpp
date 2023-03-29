@@ -442,8 +442,8 @@ torch::Tensor StateProvider::createState() {
   return torch::where(state.isnan(), 0, state).cpu();
 }
 
-EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles, boost::shared_ptr<ObstacleLoader> obstacle_loader, const YAML::Node& config,
-                               unsigned int batch_size, torch::DeviceType device)
+EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles, boost::shared_ptr<ObstacleLoader> obstacle_loader, double goal_distance_,
+                               const YAML::Node& config, unsigned int batch_size, torch::DeviceType device)
     : obstacles_(obstacles),
       obstacle_loader_(obstacle_loader),
       begin_max_offset_(utils::getConfigValue<double>(config, "begin_max_offset")[0]),
@@ -453,6 +453,9 @@ EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacle
       start_bb_dims(utils::createTensor(utils::getConfigValue<double>(config, "start_bb"), 3, 6, device)),
       goal_bb_origin(utils::createTensor(utils::getConfigValue<double>(config, "goal_bb"), 0, 3, device)),
       goal_bb_dims(utils::createTensor(utils::getConfigValue<double>(config, "goal_bb"), 3, 6, device)),
+      goal_bb_end(goal_bb_origin + goal_bb_dims),
+      goal_distance(goal_distance_),
+      goal_distance_increase(utils::getConfigValue<double>(config, "goal_distance_increase")[0]),
       device_(device) {}
 
 void EpisodeContext::setDevice(torch::DeviceType device) {
@@ -463,7 +466,10 @@ void EpisodeContext::setDevice(torch::DeviceType device) {
 void EpisodeContext::generateEpisode(const torch::Tensor& mask) {
   torch::Tensor mask_ = mask.to(device_);
   start_ = torch::where(mask_, start_bb_origin + start_bb_dims * torch::rand_like(start_), start_);
-  goal_ = torch::where(mask_, goal_bb_origin + goal_bb_dims * torch::rand_like(start_), goal_);
+  torch::Tensor constrained_goal_bb_origin = torch::maximum(start_ - goal_distance, goal_bb_origin);
+  torch::Tensor constrained_goal_bb_dims = torch::minimum(start_ + goal_distance, goal_bb_end) - constrained_goal_bb_origin;
+  goal_ = torch::where(mask_, constrained_goal_bb_origin + constrained_goal_bb_dims * torch::rand_like(start_), goal_);
+  goal_distance = std::min(goal_distance + goal_distance_increase, torch::max(goal_bb_dims).item<double>());
   obstacle_loader_->loadNext();
 }
 
@@ -481,7 +487,7 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(const YAML::Node& config,
     : ControlForceCalculator(config),
       interval_duration_(utils::getConfigValue<double>(config["rl"], "interval_duration")[0] * 10e-4),
       goal_reached_threshold_distance_(utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0]),
-      episode_context_(boost::make_shared<EpisodeContext>(env->getObstacles(), env->getObstacleLoader(), config["rl"])),
+      episode_context_(boost::make_shared<EpisodeContext>(env->getObstacles(), env->getObstacleLoader(), 0.1, config["rl"])),
       train(utils::getConfigValue<bool>(config["rl"], "train")[0]),
       rcm_origin_(utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]),
       output_dir(utils::getConfigValue<std::string>(config["rl"], "output_directory")[0]),

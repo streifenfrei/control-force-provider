@@ -262,6 +262,7 @@ class RLContext(ABC):
                  max_force,
                  reward_function,
                  goal_reached_threshold_distance,
+                 goal_distance,
                  state_augmenter,
                  output_directory,
                  save_rate,
@@ -298,6 +299,7 @@ class RLContext(ABC):
         self.last_episode_count = 0
         self.goal = None
         self.goal_reached_threshold_distance = goal_reached_threshold_distance
+        self.goal_distance = goal_distance
         self.interval_duration = interval_duration
         self.stop_update = False
         self.state_batch = None
@@ -347,6 +349,7 @@ class RLContext(ABC):
         state_dict = {**state_dict,
                       "epoch": self.epoch,
                       "episode": self.total_episode_count - self.robot_batch,
+                      "goal_distance": self.goal_distance
                       }
         torch.save(state_dict, os.path.join(self.output_dir, f"{self.epoch}.pt"))
 
@@ -365,6 +368,7 @@ class RLContext(ABC):
             self.epoch = state_dict["epoch"]
             self.episode_start = torch.full_like(self.episode_start, self.epoch)
             self.total_episode_count = self.last_episode_count = state_dict["episode"]
+            self.goal_distance = state_dict["goal_distance"]
             self._load_impl(state_dict)
 
     @staticmethod
@@ -503,6 +507,7 @@ class RLContext(ABC):
                     self.summary_writer.add_scalar(f"metrics/{key}", self.metrics[key], self.epoch)
                 for key in self.episode_accumulators_mean:
                     self.summary_writer.add_scalar(key, sum(self.episode_accumulators_mean[key] / len(self.episode_accumulators_mean), self.epoch))
+                self.summary_writer.add_scalar("goal_distance", self.goal_distance, self.epoch)
                 if self.log:
                     string = f"Epoch {self.epoch} | "
                     for key, value in self.log_dict.items():
@@ -538,6 +543,7 @@ class RLContext(ABC):
                     print(f"\r{100 * progress / self.log_interval}%\t", end="")
                 if self.epoch % self.save_rate == 0:
                     self.save()
+        self.goal_distance = state_dict["goal_distance"].item()
         return self.action
 
     def warn(self, string):

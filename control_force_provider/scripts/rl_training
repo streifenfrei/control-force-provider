@@ -92,7 +92,7 @@ def main():
         rospy.spin()
     else:
         interval_duration = config["interval_duration"] * 1e-4
-        rl_environment = RLEnvironment(config_file, [0.3, 0., 0.45], False, args.visualize)
+        rl_environment = RLEnvironment(config_file, [0.3, 0., 0.45], rl_context.goal_distance, False, args.visualize)
         state_dict = rl_environment.observe(torch.zeros((rl_context.robot_batch, 3), device=rl.DEVICE))
         while not rospy.is_shutdown():
             action = rl_context.update(state_dict)
