@@ -9,5 +9,6 @@ context_mapping = {
     "dqn_naf": DQNNAFContext,
     "mc": MonteCarloContext,
     "ac": A2CContext,
+    "sac": SACContext,
     "hrl": HierarchicalRLContext
 }
