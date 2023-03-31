@@ -74,7 +74,7 @@ class DQNContext(DiscreteRLContext):
     def __init__(self,
                  layer_size,
                  replay_buffer_size,
-                 target_network_update_rate,
+                 tau,
                  **kwargs):
         super().__init__(**kwargs)
         self.dqn_policy = DQN(self.state_dim, len(self.action_space), layer_size).to(DEVICE)
@@ -83,7 +83,7 @@ class DQNContext(DiscreteRLContext):
         self.dqn_target.eval()
         self.optimizer = torch.optim.Adam(self.dqn_policy.parameters())
         self.replay_buffer = ReplayBuffer(replay_buffer_size)
-        self.target_network_update_rate = target_network_update_rate
+        self.tau = tau
         self.ts_model = os.path.join(self.output_dir, "dqn_ts.pt")
         self.total_loss_accumulator = RLContext.Accumulator()
         self.rl_loss_accumulator = RLContext.Accumulator()
@@ -106,44 +106,42 @@ class DQNContext(DiscreteRLContext):
         if self.train:
             if len(self.last_state_dict):
                 next_state = torch.where(state_dict["is_terminal"].expand(-1, state_dict["state"].size(-1)), torch.nan, state_dict["state"])
-                self.replay_buffer.push(self.last_state_dict["state"], self.last_state_dict["robot_velocity"], self.action_index, next_state, reward)
+                self.replay_buffer.push(self.last_state_dict["state"], self.last_state_dict["robot_velocity"], self.action_index, next_state, reward, state_dict["is_terminal"])
                 # hindsight experience replay
-                her_transition = self.create_her_transitions(self.last_state_dict, self.action_index, state_dict, reward)
+                her_transition = self.create_her_transitions(self.last_state_dict, self.action_index, state_dict, reward, single_transition=False)
                 if her_transition is not None:
                     self.replay_buffer.push(*her_transition)
 
             if len(self.replay_buffer) >= self.batch_size:
-                data_load_start = time.time()
-                batch = self.replay_buffer.sample(self.batch_size)
-                state_batch = batch.state
-                action_batch = batch.action
-                reward_batch = batch.reward
-                next_state_batch = batch.next_state
-                is_terminal = next_state_batch.isnan().any(-1, keepdims=True)
-                next_state_batch = torch.where(next_state_batch.isnan(), 0, next_state_batch)
-                self.optimizer.zero_grad()
-                q = self.dqn_policy(state_batch).gather(1, action_batch)
-                with torch.no_grad():
-                    q_target = self.dqn_target(next_state_batch).max(1, keepdims=True)[0]
-                q_target_be = self.dqn_policy(next_state_batch).max(1, keepdims=True)[0]
-                dqn_target = torch.where(is_terminal, reward_batch, reward_batch + self.discount_factor * q_target)
-                be_target = torch.where(is_terminal, reward_batch, reward_batch + self.discount_factor * q_target_be)
-                dqn_loss = nn.MSELoss(reduction="none")(q, dqn_target)
-                bellman_error = nn.MSELoss(reduction="none")(q, be_target)
-                loss = torch.maximum(dqn_loss, bellman_error).mean()
-                if not loss.isnan().any():
-                    self.total_loss_accumulator.update_state(loss.detach().mean().cpu())
-                    loss.backward()
-                    clip_grad_norm_(self.dqn_policy.parameters(), 1)
-                    self.optimizer.step()
-                    self.total_loss_accumulator.update_state(loss.detach().mean().cpu())
-                    self.log_dict["loss"] += self.total_loss_accumulator.get_value().item()
-                    self.total_loss_accumulator.reset()
-                else:
-                    rospy.logwarn(f"NaNs in DQN loss. Epoch {self.epoch}")
-
-            if self.epoch % self.target_network_update_rate == 0:
-                self.dqn_target.load_state_dict(self.dqn_policy.state_dict())
+                for batch in self.replay_buffer.sample(self.batch_size)():
+                    state_batch = batch.state
+                    action_batch = batch.action
+                    reward_batch = batch.reward
+                    next_state_batch = batch.next_state
+                    is_terminal = next_state_batch.isnan().any(-1, keepdims=True)
+                    next_state_batch = torch.where(next_state_batch.isnan(), 0, next_state_batch)
+                    self.optimizer.zero_grad()
+                    q = self.dqn_policy(state_batch).gather(1, action_batch)
+                    with torch.no_grad():
+                        q_target = self.dqn_target(next_state_batch).max(1, keepdims=True)[0]
+                    q_target_be = self.dqn_policy(next_state_batch).max(1, keepdims=True)[0]
+                    dqn_target = torch.where(is_terminal, reward_batch, reward_batch + self.discount_factor * q_target)
+                    be_target = torch.where(is_terminal, reward_batch, reward_batch + self.discount_factor * q_target_be)
+                    dqn_loss = nn.MSELoss(reduction="none")(q, dqn_target)
+                    bellman_error = nn.MSELoss(reduction="none")(q, be_target)
+                    loss = torch.maximum(dqn_loss, bellman_error).mean()
+                    if not loss.isnan().any():
+                        self.total_loss_accumulator.update_state(loss.detach().mean().cpu())
+                        loss.backward()
+                        clip_grad_norm_(self.dqn_policy.parameters(), 1)
+                        self.optimizer.step()
+                        self.total_loss_accumulator.update_state(loss.detach().mean().cpu())
+                        self.log_dict["loss"] += self.total_loss_accumulator.get_value().item()
+                        self.total_loss_accumulator.reset()
+                    else:
+                        rospy.logwarn(f"NaNs in DQN loss. Epoch {self.epoch}")
+                    for target_p, p in zip(self.dqn_target.parameters(), self.dqn_policy.parameters()):
+                        target_p.data.copy_(target_p.data * (1. - self.tau) + p.data * self.tau)
         self.dqn_policy.eval()
         with torch.no_grad():
             self.action_index = self.dqn_policy(state_dict["state"]).max(-1)[1].unsqueeze(-1)
