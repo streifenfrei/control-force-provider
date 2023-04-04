@@ -20,27 +20,36 @@ class ActorCritic(nn.Module):
         self.critic = nn.Linear(layer_size, 1)
 
     def forward(self, state):
-        x = torch.relu(self.dense1(state))
-        x = self.bnorm1(x)
-        x = torch.relu(self.dense2(x))
-        x = self.bnorm2(x)
+        x = torch.nn.functional.mish(self.dense1(state))
+        # x = self.bnorm1(x)
+        x = torch.nn.functional.mish(self.dense2(x))
+        # x = self.bnorm2(x)
         return self.softmax(10 * torch.tanh(self.actor(x))), self.critic(x)
 
 
 class A2CContext(DiscreteRLContext):
     def __init__(self,
                  layer_size,
-                 replay_buffer_size,
+                 entropy_beta,
                  **kwargs):
         super().__init__(**kwargs)
         self.actor_critic = ActorCritic(self.state_dim, len(self.action_space), layer_size).to(DEVICE)
-        self.kld = torch.nn.KLDivLoss(reduction="none", log_target=True)
         self.optimizer = torch.optim.Adam(self.actor_critic.parameters())
-        self.replay_buffer = ReplayBuffer(replay_buffer_size, transition=ACTransition)
+        self.update_interval = 2 * self.max_episode_length
+        self.update_step_size = int(self.batch_size / self.update_interval)
+        self.update_steps = math.ceil(self.robot_batch / self.update_step_size)
+        assert self.update_step_size > 0
+        self.state_stack = []
+        self.actions_stack = []
+        self.rewards_stack = []
+        self.is_terminal_stack = []
+        self.reached_goal_stack = []
+        self.entropy_beta = float(entropy_beta)
+        self.weight_limit = torch.tensor(0.1, device=DEVICE)
         self.log_dict["loss/critic"] = 0
         self.log_dict["loss/actor"] = 0
-        self.stop_update = False
-        self.update_thread = Thread(target=self.update_runnable).start()
+        self.log_dict["loss/entropy"] = 0
+        self.explore = False
 
     def __del__(self):
         self.stop_update = True
@@ -54,66 +63,74 @@ class A2CContext(DiscreteRLContext):
         self.optimizer = torch.optim.Adam(self.actor_critic.parameters())
         self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
 
-    def get_correction_weight(self, p, q):
-        m = torch.log((0.5 * (p + q)))
-        jsd = 0.5 * (self.kld(m, torch.log(p)) + self.kld(m, torch.log(q)))
-        return torch.exp(-jsd)
-
-    def update_runnable(self):
-        batch_generator = None
-        while not self.stop_update:
-            if len(self.replay_buffer) >= self.batch_size:
-                if batch_generator is None:
-                    batch_generator = self.replay_buffer.sample(self.batch_size)()
-                try:
-                    batch = next(batch_generator)
-                except StopIteration:
-                    batch_generator = None
-                    continue
-                state_batch = batch.state
-                action_batch = batch.action
-                next_state_batch = batch.next_state
-                reward_batch = batch.reward
-                exploration_prob_batch = batch.exploration_prob
-                is_terminal = batch.is_terminal
-                action_probs, v_current = self.actor_critic(state_batch)
-                _, v_next = self.actor_critic(next_state_batch)
-                advantage = reward_batch + (1. - is_terminal) * self.discount_factor * v_next - v_current
-                # off-policy correction
-                action_probs = action_probs.gather(-1, action_batch)
-                weights = self.get_correction_weight(action_probs, exploration_prob_batch).detach()
-                weights_sum = weights.sum()
-                # loss calculation
-                critic_loss = 0.5 * ((advantage.pow(2) * weights).sum() / weights_sum)
-                actor_loss = torch.log(action_probs) * advantage.detach() * weights
-                actor_loss = -actor_loss.sum() / weights_sum
-                loss = actor_loss + critic_loss
-                if not loss.isnan().any():
-                    self.optimizer.zero_grad()
-                    loss.backward()
-                    clip_grad_norm_(self.actor_critic.parameters(), 100)
-                    self.optimizer.step()
-                    self.log_dict["loss/critic"] += critic_loss.item()
-                    self.log_dict["loss/actor"] += actor_loss.item()
-                else:
-                    rospy.logwarn(f"NaNs in actor critic loss. Epoch {self.epoch}")
-            else:
-                time.sleep(1)
-
     def _update_impl(self, state_dict, reward):
         if self.train:
             if len(self.last_state_dict):
-                self.replay_buffer.push(self.last_state_dict["state"], self.last_state_dict["robot_velocity"], self.action_index, state_dict["state"], reward, state_dict["is_terminal"],
-                                        self.exploration_probs.gather(-1, self.action_index))
-                # hindsight experience replay
-                her_transition = self.create_her_transitions(self.last_state_dict, self.action_index, state_dict, reward, single_transition=True)
-                if her_transition is not None:
-                    her_state, her_velocity, her_action, _, _, _ = her_transition
-                    self.actor_critic.eval()
-                    with torch.no_grad():
-                        her_exploration_probs = self.get_exploration_probs(self.actor_critic(her_state)[0], her_velocity).gather(-1, her_action)
-                    self.actor_critic.train()
-                    self.replay_buffer.push(*her_transition, her_exploration_probs)
+                self.state_stack.append(state_dict["state"].cpu())
+                self.actions_stack.append(self.action_index.cpu())
+                self.rewards_stack.append(reward.cpu())
+                self.is_terminal_stack.append(state_dict["is_terminal"].cpu())
+                self.reached_goal_stack.append(state_dict["reached_goal"].cpu())
+            if len(self.state_stack) == self.update_interval:
+                all_states = torch.stack(self.state_stack)
+                all_actions = torch.stack(self.actions_stack)
+                all_rewards = torch.stack(self.rewards_stack)
+                all_terminals = torch.stack(self.is_terminal_stack)
+                all_reached_goals = torch.stack(self.reached_goal_stack)
+                loss_critic_log = 0
+                loss_actor_log = 0
+                loss_entropy_log = 0
+                for batch_start in range(0, self.robot_batch, self.update_step_size):
+                    batch_end = min(batch_start + self.update_step_size, self.robot_batch)
+                    states = all_states[:, batch_start:batch_end, :].to(DEVICE)
+                    actions = all_actions[:, batch_start:batch_end, :].to(DEVICE)
+                    rewards = all_rewards[:, batch_start:batch_end, :].to(DEVICE)
+                    terminals = all_terminals[:, batch_start:batch_end, :].to(DEVICE)
+                    reached_goal = all_reached_goals[:, batch_start:batch_end, :].to(device=DEVICE, dtype=torch.float)
+                    no_terminals = terminals.logical_not()
+                    terminals_float = terminals.float()
+                    returns = torch.zeros_like(rewards)
+                    is_valid = torch.zeros_like(terminals)
+                    for i in reversed(range(self.update_interval)):
+                        i_plus_one = min(i + 1, self.update_interval - 1)
+                        i_minus_one = max(i - 1, 0)
+                        returns[i, :, :] = (1 - terminals_float[i, :, :]) * self.discount_factor * returns[i_plus_one, :, :] + rewards[i, :, :]
+                        is_valid[i, :, :] = (is_valid[i_plus_one, :, :].logical_or(terminals[i, :, :])).logical_and(no_terminals[i, :, :].logical_or(no_terminals[i_minus_one, :, :]))
+                        reached_goal[i, :, :] = reached_goal[i, :, :].logical_or(reached_goal[i_plus_one].logical_and(no_terminals[i, :, :]))
+                    states = torch.masked_select(states, is_valid).reshape([-1, states.size(-1)])
+                    actions = torch.masked_select(actions, is_valid).reshape([-1, actions.size(-1)])
+                    returns = torch.masked_select(returns, is_valid).reshape([-1, returns.size(-1)])
+                    reached_goal = torch.masked_select(reached_goal, is_valid).reshape([-1, reached_goal.size(-1)])
+                    action_probs, value = self.actor_critic(states)
+                    entropy = -(action_probs * torch.log(action_probs)).sum(-1)
+                    action_probs = action_probs.gather(-1, actions)
+                    advantage = returns - value
+                    success_ratio = torch.min(reached_goal.sum() / reached_goal.numel(), self.weight_limit)
+                    fail_ratio = 1 - success_ratio
+                    weights = reached_goal * (fail_ratio / (success_ratio + EPSILON)) + (1 - reached_goal)
+                    # loss calculation
+                    actor_loss = -((weights * torch.log(action_probs) * advantage.detach())).mean()
+                    critic_loss = (weights * advantage.pow(2)).mean()
+                    entropy_loss = ((weights - 1) * entropy).mean()
+                    loss = actor_loss + critic_loss + self.entropy_beta * entropy_loss
+                    if not loss.isnan().any():
+                        self.optimizer.zero_grad()
+                        loss.backward()
+                        clip_grad_norm_(self.actor_critic.parameters(), 1)
+                        self.optimizer.step()
+                        loss_actor_log += actor_loss.item()
+                        loss_critic_log += critic_loss.item()
+                        loss_entropy_log += entropy.mean().item()
+                    else:
+                        rospy.logwarn(f"NaNs in actor critic loss. Epoch {self.epoch}")
+                self.log_dict["loss/critic"] += loss_critic_log / self.update_steps
+                self.log_dict["loss/actor"] += loss_actor_log / self.update_steps
+                self.log_dict["loss/entropy"] += loss_entropy_log / self.update_steps
+                self.state_stack = []
+                self.actions_stack = []
+                self.rewards_stack = []
+                self.is_terminal_stack = []
+                self.reached_goal_stack = []
         self.actor_critic.eval()
         with torch.no_grad():
             self.action_index = self.actor_critic(state_dict["state"].to(DEVICE))[0]
@@ -199,6 +216,7 @@ class SACContext(ContinuesRLContext):
         self.log_dict["loss/alpha"] = 0
         self.max_norm = torch.linalg.vector_norm(torch.ones(self.action_dim))
         self.action_raw = None
+        self.explore = False
 
     def _get_state_dict_(self):
         return {
@@ -246,7 +264,6 @@ class SACContext(ContinuesRLContext):
                 next_state_batch = batch.next_state
                 reward_batch = batch.reward
                 is_terminal_batch = batch.is_terminal
-                print(reward_batch[is_terminal_batch.bool().logical_not()])
                 alpha = self.log_alpha.exp()
                 self.log_dict["loss/alpha"] += alpha.item()
                 with torch.no_grad():

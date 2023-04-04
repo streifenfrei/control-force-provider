@@ -104,13 +104,13 @@ class RewardFunction:
         #collision_distances = (state_dict["collision_distances"][:, x:x + 1] for x in range(state_dict["collision_distances"].size(-1)))
         #distance_to_goal = torch.linalg.norm(goal - robot_position, dim=-1).unsqueeze(-1)
         # motion_reward = torch.where(mask, (torch.linalg.norm(goal - last_robot_position) - distance_to_goal) / (self.fmax * self.interval_duration), torch.nan)
-        collision_penalty = torch.where(mask, 0, torch.nan)
+        collision_penalty = torch.zeros_like(mask, dtype=torch.float)
         collision_penalty -= torch.where(state_dict["collided"], self.max_penalty, 0)
-        motion_reward = torch.where(mask, torch.full_like(collision_penalty, self.motion_penalty), torch.nan)
+        motion_reward = torch.where(mask, torch.full_like(collision_penalty, self.motion_penalty), 0)
         #for collision_distance in collision_distances:
         #    collision_penalty = -torch.where(collision_distance.isnan(), 0, collision_penalty + (self.dc / (collision_distance + EPSILON)) ** self.mc)
         #collision_penalty = torch.minimum(collision_penalty, self.max_penalty)
-        goal_reward = torch.where(mask, torch.where(state_dict["reached_goal"], self.rg, torch.zeros_like(collision_penalty)), torch.nan)
+        goal_reward = torch.where(mask, torch.where(state_dict["reached_goal"], self.rg, torch.zeros_like(collision_penalty)), 0)
         #if self.max_distance is None:
         #    self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
         #timeout_penalty = self.min_timeout_penalty + ((distance_to_goal / self.max_distance) * self.timeout_penalty_range)
@@ -320,6 +320,7 @@ class RLContext(ABC):
         self.her_noise_dist = self.noise_dist = torch.distributions.multivariate_normal.MultivariateNormal(torch.zeros(3), torch.eye(3) * 1e-5)
         self.her_transition_buffer = []
         self.goal_state_index = self.state_augmenter.mapping[StatePartID.goal][0]
+        self.explore = True
 
     def __del__(self):
         self.summary_writer.flush()
@@ -591,12 +592,12 @@ class DiscreteRLContext(RLContext):
         return exploration_probs
 
     def _post_update(self, state_dict):
-        if self.train:
+        if self.train and self.explore:
             self.action_space.update_goal_vector(state_dict["goal"] - state_dict["robot_position"])
             # explore
             self.exploration_probs = self.get_exploration_probs(self.action_index, state_dict["robot_velocity"])
             if "success_ratio" in self.metrics:
-                #if self.best_success_ratio is not None and (self.metrics["success_ratio"] > self.best_success_ratio or self.metrics["success_ratio"] >= self.good_success_ratio):
+                # if self.best_success_ratio is not None and (self.metrics["success_ratio"] > self.best_success_ratio or self.metrics["success_ratio"] >= self.good_success_ratio):
                 if self.best_success_ratio != self.metrics["success_ratio"]:
                     self.exploration_epsilon *= self.exploration_decay
                 self.best_success_ratio = self.metrics["success_ratio"]
@@ -604,34 +605,34 @@ class DiscreteRLContext(RLContext):
             if self.epoch % self.log_interval == 0:
                 self.summary_writer.add_scalar("exploration/epsilon", self.exploration_epsilon, self.epoch)
         elif self.action_index.size(-1) > 1:
-            self.action_index = torch.distributions.Categorical(probs=self.exploration_probs).sample().unsqueeze(-1)
+            self.action_index = torch.distributions.Categorical(probs=self.action_index).sample().unsqueeze(-1)
         # get actual action vector
         self.action = self.action_space.get_action(self.action_index)
 
 
 class ContinuesRLContext(RLContext):
     def __init__(self,
-                 # exploration_angle_sigma,
-                 # exploration_bb_rep_p,
-                 # exploration_magnitude_sigma,
-                 # exploration_max_goal_p,
-                 # exploration_decay,
-                 # exploration_duration,
+                 exploration_angle_sigma,
+                 exploration_bb_rep_p,
+                 exploration_magnitude_sigma,
+                 exploration_max_goal_p,
+                 exploration_decay,
+                 exploration_duration,
                  **kwargs):
         super().__init__(**kwargs)
-        # self.exploration_angle_sigma = exploration_angle_sigma
-        # self.exploration_rot_axis = None
-        # self.exploration_angle = 0
-        # self.exploration_bb_rep_p = exploration_bb_rep_p
-        # self.exploration_bb_rep_dims = np.zeros(3)
-        # self.exploration_magnitude_sigma = exploration_magnitude_sigma
-        # self.exploration_magnitude = 0
-        # self.exploration_goal_p = exploration_max_goal_p
-        # self.exploration_decay = exploration_decay
-        # self.exploration_duration = int(exploration_duration * 1000 / self.interval_duration)
-        # self.exploration_index = 0
-        # self.exploration_rot_axis_dist = torch.distributions.multivariate_normal.MultivariateNormal(torch.zeros(3), torch.eye(3))
-        #self.uniform_dist = torch.distributions.uniform.Uniform(0, 1)
+        self.exploration_angle_sigma = exploration_angle_sigma
+        self.exploration_rot_axis = None
+        self.exploration_angle = 0
+        self.exploration_bb_rep_p = exploration_bb_rep_p
+        self.exploration_bb_rep_dims = np.zeros(3)
+        self.exploration_magnitude_sigma = exploration_magnitude_sigma
+        self.exploration_magnitude = 0
+        self.exploration_goal_p = exploration_max_goal_p
+        self.exploration_decay = exploration_decay
+        self.exploration_duration = int(exploration_duration * 1000 / self.interval_duration)
+        self.exploration_index = 0
+        self.exploration_rot_axis_dist = torch.distributions.multivariate_normal.MultivariateNormal(torch.zeros(3), torch.eye(3))
+        self.uniform_dist = torch.distributions.uniform.Uniform(0, 1)
 
     @abstractmethod
     def _get_state_dict_(self):
@@ -647,17 +648,17 @@ class ContinuesRLContext(RLContext):
 
     def _get_state_dict(self):
         return {**self._get_state_dict_(),
-                # "exploration_angle_sigma": self.exploration_angle_sigma,
-                # "exploration_bb_rep_p": self.exploration_bb_rep_p,
-                # "exploration_magnitude_sigma": self.exploration_magnitude_sigma,
-                #"exploration_goal_p": self.exploration_goal_p
+                "exploration_angle_sigma": self.exploration_angle_sigma,
+                "exploration_bb_rep_p": self.exploration_bb_rep_p,
+                "exploration_magnitude_sigma": self.exploration_magnitude_sigma,
+                "exploration_goal_p": self.exploration_goal_p
                 }
 
     def _load_impl(self, state_dict):
-        # self.exploration_angle_sigma = state_dict["exploration_angle_sigma"]
-        # self.exploration_bb_rep_p = state_dict["exploration_bb_rep_p"]
-        # self.exploration_magnitude_sigma = state_dict["exploration_magnitude_sigma"]
-        # self.exploration_goal_p = state_dict["exploration_goal_p"]
+        self.exploration_angle_sigma = state_dict["exploration_angle_sigma"]
+        self.exploration_bb_rep_p = state_dict["exploration_bb_rep_p"]
+        self.exploration_magnitude_sigma = state_dict["exploration_magnitude_sigma"]
+        self.exploration_goal_p = state_dict["exploration_goal_p"]
         self._load_impl_(state_dict)
 
     def _post_update(self, state_dict):
@@ -665,55 +666,55 @@ class ContinuesRLContext(RLContext):
         if torch.any(nans):
             # rospy.logwarn(f"NaNs in action tensor. Epoch {self.epoch}")
             self.action = torch.where(nans, 0, self.action)
-        # if self.train:
-        #    # explore
-        #    explore = state_dict["is_timeout"].logical_not()
-        #    if self.exploration_index == 0 or self.exploration_rot_axis is None:
-        #        self.exploration_rot_axis = self.exploration_rot_axis_dist.sample([self.robot_batch]).to(DEVICE)
-        #        self.exploration_angle = torch.deg2rad(torch.distributions.normal.Normal(loc=0, scale=self.exploration_angle_sigma).sample([self.robot_batch])).unsqueeze(-1).to(
-        #            DEVICE) if self.exploration_angle_sigma > EPSILON else torch.zeros([self.robot_batch, 1])
-        #        self.exploration_magnitude = torch.distributions.normal.Normal(loc=0, scale=self.exploration_magnitude_sigma).sample([self.robot_batch]).unsqueeze(-1).to(
-        #            DEVICE) if self.exploration_magnitude_sigma > EPSILON else torch.zeros([self.robot_batch, 1])
-        #        # set repulsion vector
-        #        self.exploration_bb_rep_dims = torch.empty_like(self.action)
-        #        bb_rep = self.uniform_dist.sample(explore.shape).to(DEVICE) < self.exploration_bb_rep_dims
-        #        bb_origin = state_dict["workspace_bb_origin"]
-        #        bb_end = bb_origin + state_dict["workspace_bb_dims"]
-        #        ee_position = state_dict["robot_position"]
-        #        mask = ee_position - BB_REPULSION_DISTANCE < bb_origin
-        #        self.exploration_bb_rep_dims = torch.where(bb_rep.logical_and(mask), self.max_force, 0)
-        #        mask = mask.logical_not().logical_and(ee_position + BB_REPULSION_DISTANCE > bb_end)
-        #        self.exploration_bb_rep_dims = torch.where(bb_rep.logical_and(mask), -self.max_force, self.exploration_bb_rep_dims)
-        #    self.exploration_index = (self.exploration_index + 1) % self.exploration_duration
-        #    # choose action towards goal with some p
-        #    move_to_goal = self.uniform_dist.sample(explore.shape).to(DEVICE) < self.exploration_goal_p
-        #    self.exploration_goal_p *= self.exploration_decay
-        #    goal_direction = state_dict["goal"] - state_dict["robot_position"]
-        #    distance_to_goal = torch.linalg.norm(goal_direction)
-        #    goal_direction = goal_direction / distance_to_goal * torch.tensor(self.max_force)
-        #    action = torch.where(move_to_goal, goal_direction, self.action)
-        #    mask = explore.logical_and(move_to_goal.logical_not())
-        #    # change dimensions for which we repulse from the bb wall
-        #    action = torch.where((self.exploration_bb_rep_dims != 0).logical_and(mask), self.exploration_bb_rep_dims, action)
-        #    self.exploration_bb_rep_p *= self.exploration_decay
-        #    # rotate the action vector a bit
-        #    self.exploration_rot_axis[:, 2] = - (self.exploration_rot_axis[:, 0] * action[:, 0] + self.exploration_rot_axis[:, 1] * action[:, 1]) / action[:, 2]  # make it perpendicular to the action vector
-        #    self.exploration_rot_axis /= torch.linalg.norm(self.exploration_rot_axis, -1)
-        #    self.exploration_angle_sigma *= self.exploration_decay
-        #    cos_angle = torch.cos(self.exploration_angle)
-        #    action = torch.where(mask,
-        #                         action * cos_angle +  # Rodrigues' rotation formula
-        #                         torch.sin(self.exploration_angle) * torch.linalg.cross(action, self.exploration_rot_axis) +
-        #                         self.exploration_rot_axis * torch.linalg.vecdot(self.exploration_rot_axis, action).unsqueeze(-1) * (1 - cos_angle),
-        #                         action)
-        #    self.exploration_rot_axis = torch.where(self.exploration_angle < 0, self.exploration_rot_axis * -1, self.exploration_rot_axis)
-        #    # change magnitude
-        #    magnitude = torch.linalg.norm(action)
-        #    clipped_magnitude = torch.clip(magnitude + self.exploration_magnitude, 0., self.max_force)
-        #    self.summary_writer.add_scalar("magnitude", clipped_magnitude.mean(), self.epoch)
-        #    action = torch.where(mask, action / magnitude * clipped_magnitude, action)
-        #    self.exploration_magnitude_sigma *= self.exploration_decay
-        #    if self.epoch % self.log_interval == 0:
-        #        self.summary_writer.add_scalar("exploration/angle_sigma", self.exploration_angle_sigma, self.epoch)
-        #        self.summary_writer.add_scalar("exploration/magnitude_sigma", self.exploration_magnitude_sigma, self.epoch)
-        #        self.summary_writer.add_scalar("exploration/goal_p", self.exploration_goal_p, self.epoch)
+        if self.train and self.explore:
+            # explore
+            explore = state_dict["is_timeout"].logical_not()
+            if self.exploration_index == 0 or self.exploration_rot_axis is None:
+                self.exploration_rot_axis = self.exploration_rot_axis_dist.sample([self.robot_batch]).to(DEVICE)
+                self.exploration_angle = torch.deg2rad(torch.distributions.normal.Normal(loc=0, scale=self.exploration_angle_sigma).sample([self.robot_batch])).unsqueeze(-1).to(
+                    DEVICE) if self.exploration_angle_sigma > EPSILON else torch.zeros([self.robot_batch, 1])
+                self.exploration_magnitude = torch.distributions.normal.Normal(loc=0, scale=self.exploration_magnitude_sigma).sample([self.robot_batch]).unsqueeze(-1).to(
+                    DEVICE) if self.exploration_magnitude_sigma > EPSILON else torch.zeros([self.robot_batch, 1])
+                # set repulsion vector
+                self.exploration_bb_rep_dims = torch.empty_like(self.action)
+                bb_rep = self.uniform_dist.sample(explore.shape).to(DEVICE) < self.exploration_bb_rep_dims
+                bb_origin = state_dict["workspace_bb_origin"]
+                bb_end = bb_origin + state_dict["workspace_bb_dims"]
+                ee_position = state_dict["robot_position"]
+                mask = ee_position - BB_REPULSION_DISTANCE < bb_origin
+                self.exploration_bb_rep_dims = torch.where(bb_rep.logical_and(mask), self.max_force, 0)
+                mask = mask.logical_not().logical_and(ee_position + BB_REPULSION_DISTANCE > bb_end)
+                self.exploration_bb_rep_dims = torch.where(bb_rep.logical_and(mask), -self.max_force, self.exploration_bb_rep_dims)
+            self.exploration_index = (self.exploration_index + 1) % self.exploration_duration
+            # choose action towards goal with some p
+            move_to_goal = self.uniform_dist.sample(explore.shape).to(DEVICE) < self.exploration_goal_p
+            self.exploration_goal_p *= self.exploration_decay
+            goal_direction = state_dict["goal"] - state_dict["robot_position"]
+            distance_to_goal = torch.linalg.norm(goal_direction)
+            goal_direction = goal_direction / distance_to_goal * torch.tensor(self.max_force)
+            action = torch.where(move_to_goal, goal_direction, self.action)
+            mask = explore.logical_and(move_to_goal.logical_not())
+            # change dimensions for which we repulse from the bb wall
+            action = torch.where((self.exploration_bb_rep_dims != 0).logical_and(mask), self.exploration_bb_rep_dims, action)
+            self.exploration_bb_rep_p *= self.exploration_decay
+            # rotate the action vector a bit
+            self.exploration_rot_axis[:, 2] = - (self.exploration_rot_axis[:, 0] * action[:, 0] + self.exploration_rot_axis[:, 1] * action[:, 1]) / action[:, 2]  # make it perpendicular to the action vector
+            self.exploration_rot_axis /= torch.linalg.norm(self.exploration_rot_axis, -1)
+            self.exploration_angle_sigma *= self.exploration_decay
+            cos_angle = torch.cos(self.exploration_angle)
+            action = torch.where(mask,
+                                 action * cos_angle +  # Rodrigues' rotation formula
+                                 torch.sin(self.exploration_angle) * torch.linalg.cross(action, self.exploration_rot_axis) +
+                                 self.exploration_rot_axis * torch.linalg.vecdot(self.exploration_rot_axis, action).unsqueeze(-1) * (1 - cos_angle),
+                                 action)
+            self.exploration_rot_axis = torch.where(self.exploration_angle < 0, self.exploration_rot_axis * -1, self.exploration_rot_axis)
+            # change magnitude
+            magnitude = torch.linalg.norm(action)
+            clipped_magnitude = torch.clip(magnitude + self.exploration_magnitude, 0., self.max_force)
+            self.summary_writer.add_scalar("magnitude", clipped_magnitude.mean(), self.epoch)
+            action = torch.where(mask, action / magnitude * clipped_magnitude, action)
+            self.exploration_magnitude_sigma *= self.exploration_decay
+            if self.epoch % self.log_interval == 0:
+                self.summary_writer.add_scalar("exploration/angle_sigma", self.exploration_angle_sigma, self.epoch)
+                self.summary_writer.add_scalar("exploration/magnitude_sigma", self.exploration_magnitude_sigma, self.epoch)
+                self.summary_writer.add_scalar("exploration/goal_p", self.exploration_goal_p, self.epoch)
