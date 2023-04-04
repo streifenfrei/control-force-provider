@@ -12,6 +12,7 @@ class TorchRLEnvironment : ROSNode {
  private:
   double goal_reached_threshold_distance_;
   double collision_threshold_distance_;
+  double max_force_;
   int timeout_;
   torch::DeviceType device_;
   torch::Tensor ee_positions_;

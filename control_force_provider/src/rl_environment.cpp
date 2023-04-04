@@ -15,6 +15,7 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
   Time::setType<ManualTime>();
   time_ = boost::static_pointer_cast<ManualTime>(Time::getInstance());
   batch_size_ = utils::getConfigValue<int>(config["rl"], "robot_batch")[0];
+  max_force_ = utils::getConfigValue<double>(config, "max_force")[0];
   env_ = boost::make_shared<Environment>(config, batch_size_, device_);
   episode_context_ = boost::make_shared<EpisodeContext>(env_->getObstacles(), env_->getObstacleLoader(), goal_distance, config["rl"], batch_size_, device_);
   episode_context_->generateEpisode();
@@ -85,7 +86,9 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
     torch::Tensor force = torch::empty_like(actions_copy);
     pfm_->getForceImpl(force);
     actions_copy += force;
-    env_->clipForce(actions_copy);
+    // env_->clipForce(actions_copy);
+    torch::Tensor actions_norm = utils::norm(actions_copy);
+    actions_copy = (actions_copy / (actions_norm + 1e-7)) * torch::min(actions_norm, torch::full({1}, max_force_, device_));
   }
   ee_positions_ += actions_copy * interval_duration_;
   ee_positions_ =
@@ -106,7 +109,7 @@ std::map<std::string, torch::Tensor> TorchRLEnvironment::observe(const Tensor& a
   env_->setStartTime(torch::where(is_terminal_, Time::now(), env_->getStartTime()));
   ee_positions_ = torch::where(is_terminal_, episode_context_->getStart(), ee_positions_);
   is_terminal_ = reached_goal_.logical_or(collided_.logical_or(is_timeout_));
-  epoch_count_ = torch::where(is_terminal_, 0, epoch_count_ + 1).cpu();
+  epoch_count_ = torch::where(is_terminal_, 0, epoch_count_ + 1);
   env_->setGoal(episode_context_->getGoal());
   env_->update(ee_positions_);
   *time_ += interval_duration_ * 1e-3;
