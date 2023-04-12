@@ -163,7 +163,7 @@ class SACPolicy(nn.Module):
         self.bnorm2 = nn.BatchNorm1d(layer_size)
         self.mean = nn.Linear(layer_size, action_dim)
         self.log_std = nn.Linear(layer_size, action_dim)
-        self.log_std_min = -5
+        self.log_std_min = -20
         self.log_std_max = 3
         self.max_force = max_force
 
@@ -172,15 +172,14 @@ class SACPolicy(nn.Module):
         # x = self.bnorm1(x)
         x = torch.relu(self.dense2(x))
         # x = self.bnorm2(x)
-        log_std = torch.tanh(self.log_std(x))
-        return self.mean(x), self.log_std_min + 0.5 * (self.log_std_max - self.log_std_min) * (log_std + 1)
+        return self.mean(x), torch.clamp(self.log_std(x), self.log_std_min, self.log_std_max)
 
     def get_action(self, state, sample=True):
         mean, log_std = self.forward(state)
         dist = torch.distributions.Normal(mean, log_std.exp())
         action = dist.rsample() if sample else mean
-        action = torch.tanh(action)
         log_prob = dist.log_prob(action)
+        action = torch.tanh(action)
         log_prob = (log_prob - torch.log(1 - action.pow(2) + 1e-6)).sum(-1, keepdim=True)
         return action, log_prob
 
@@ -263,7 +262,7 @@ class SACContext(ContinuesRLContext):
                 action_batch = batch.action
                 next_state_batch = batch.next_state
                 reward_batch = batch.reward
-                is_terminal_batch = batch.is_terminal
+                is_terminal_batch = batch.is_terminal.float()
                 alpha = self.log_alpha.exp()
                 self.log_dict["loss/alpha"] += alpha.item()
                 with torch.no_grad():
@@ -279,7 +278,8 @@ class SACContext(ContinuesRLContext):
                         self.actor_optim.zero_grad()
                         actor_loss.backward()
                         self.actor_optim.step()
-                        self.log_dict["loss/actor"] += actor_loss.item()
+                        if not self.evaluating:
+                            self.log_dict["loss/actor"] += actor_loss.item()
                     else:
                         rospy.logwarn(f"NaNs in actor loss. Epoch {self.epoch}")
                 if not q1_loss.isnan().any():
@@ -287,7 +287,8 @@ class SACContext(ContinuesRLContext):
                     q1_loss.backward()
                     self.q1_optim.step()
                     self._soft_copy(self.q1_target, self.q1)
-                    self.log_dict["loss/q1"] += q1_loss.item()
+                    if not self.evaluating:
+                        self.log_dict["loss/q1"] += q1_loss.item()
                 else:
                     rospy.logwarn(f"NaNs in q1 loss. Epoch {self.epoch}")
                 if not q2_loss.isnan().any():
@@ -295,7 +296,8 @@ class SACContext(ContinuesRLContext):
                     q2_loss.backward()
                     self.q2_optim.step()
                     self._soft_copy(self.q2_target, self.q2)
-                    self.log_dict["loss/q2"] += q2_loss.item()
+                    if not self.evaluating:
+                        self.log_dict["loss/q2"] += q2_loss.item()
                 else:
                     rospy.logwarn(f"NaNs in q2 loss. Epoch {self.epoch}")
                 alpha_loss = (-self.log_alpha * (actor_state_actions_log_probs - self.action_dim).detach()).mean()
@@ -316,12 +318,12 @@ class SACContext(ContinuesRLContext):
                                         torch.masked_select(reward, was_not_terminal).reshape([-1, 1]),
                                         torch.masked_select(state_dict["is_terminal"], was_not_terminal).reshape([-1, 1]))
                 # hindsight experience replay
-                her_transition = self.create_her_transitions(self.last_state_dict, self.action_raw, state_dict, reward, single_transition=True)
+                her_transition = self.create_her_transitions(self.last_state_dict, self.action_raw, state_dict, reward)
                 if her_transition is not None:
                     self.replay_buffer.push(*her_transition)
         with self.actor_lock:
             self.actor.eval()
             with torch.no_grad():
-                self.action_raw, _ = self.actor.get_action(state_dict["state"], sample=self.train)
+                self.action_raw, _ = self.actor.get_action(state_dict["state"], sample=True)
                 self.action = self.action_raw / self.max_norm * self.max_force
             self.actor.train()
