@@ -308,7 +308,13 @@ class SACContext(ContinuesRLContext):
     def _update_impl(self, state_dict, reward):
         if self.train:
             if len(self.last_state_dict):
-                self.replay_buffer.push(self.last_state_dict["state"], self.last_state_dict["robot_velocity"], self.action_raw, state_dict["state"], reward, state_dict["is_terminal"])
+                was_not_terminal = self.last_state_dict["is_terminal"].logical_not()
+                self.replay_buffer.push(torch.masked_select(self.last_state_dict["state"], was_not_terminal).reshape([-1, self.state_dim]),
+                                        torch.masked_select(self.last_state_dict["robot_velocity"], was_not_terminal).reshape([-1, 3]),
+                                        torch.masked_select(self.action_raw, was_not_terminal).reshape([-1, 3]),
+                                        torch.masked_select(state_dict["state"], was_not_terminal).reshape([-1, self.state_dim]),
+                                        torch.masked_select(reward, was_not_terminal).reshape([-1, 1]),
+                                        torch.masked_select(state_dict["is_terminal"], was_not_terminal).reshape([-1, 1]))
                 # hindsight experience replay
                 her_transition = self.create_her_transitions(self.last_state_dict, self.action_raw, state_dict, reward, single_transition=True)
                 if her_transition is not None:
