@@ -111,10 +111,10 @@ class RewardFunction:
         #    collision_penalty = torch.where(collision_distance.isnan(), 0, collision_penalty + (self.dc / (collision_distance + EPSILON)) ** self.mc)
         # collision_penalty = -torch.minimum(collision_penalty, self.max_penalty)
         goal_reward = torch.where(mask, torch.where(state_dict["reached_goal"], self.rg, torch.zeros_like(collision_penalty)), 0)
-        #if self.max_distance is None:
+        # if self.max_distance is None:
         #    self.max_distance = torch.linalg.norm(state_dict["workspace_bb_dims"])
-        #timeout_penalty = self.min_timeout_penalty + ((distance_to_goal / self.max_distance) * self.timeout_penalty_range)
-        #goal_reward = torch.where(state_dict["reached_goal"], goal_reward, 0)
+        # timeout_penalty = self.min_timeout_penalty + ((distance_to_goal / self.max_distance) * self.timeout_penalty_range)
+        # goal_reward = torch.where(state_dict["reached_goal"], goal_reward, 0)
         total_reward = motion_reward + collision_penalty + goal_reward  # + timeout_penalty
         return total_reward, motion_reward, collision_penalty, goal_reward
 
@@ -374,69 +374,52 @@ class RLContext(ABC):
             state_dict_copy[key] = value.clone()
         return state_dict_copy
 
-    def create_her_transitions(self, state_dict, action, next_state_dict, reward, single_transition=False):
-        if single_transition:
-            mask = next_state_dict["collided"].logical_not()
-            if mask.any():
-                states = state_dict["state"][mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
-                actions = action[mask.expand([-1, action.size(-1)])].reshape([-1, action.size(-1)])
-                velocities = state_dict["robot_velocity"][mask.expand([-1, 3])].reshape([-1, 3])
-                next_states = next_state_dict["state"][mask.expand([-1, self.state_dim])].reshape([-1, self.state_dim]).clone()
-                rewards = torch.full([action.size(0), 1], self.her_reward)
-                goals = next_state_dict["robot_position"][mask.expand([-1, 3])].reshape([-1, 3])
-                noise = self.her_noise_dist.sample([goals.size(0)])
-                noise_magnitudes = torch.linalg.vector_norm(noise, dim=-1, keepdims=True)
-                noise /= noise_magnitudes
-                noise *= torch.minimum(noise_magnitudes, torch.tensor(self.goal_reached_threshold_distance))
-                goals += noise
-                states[:, self.goal_state_index:self.goal_state_index + 3] = goals
-                next_states[:, self.goal_state_index:self.goal_state_index + 3] = goals
-                return states, velocities, actions, next_states, rewards, torch.ones([states.size(0), 1])
-            else:
-                return None
-        is_her_terminal = next_state_dict["is_timeout"]
+    def create_her_transitions(self, state_dict, action, next_state_dict, reward):
+        max_episode_length = int(torch.max(self.acc_lengths).item())
         self.her_transition_buffer.append((state_dict["state"],
                                            state_dict["robot_velocity"],
                                            action,
                                            next_state_dict["state"],
-                                           torch.where(is_her_terminal, next_state_dict["robot_position"], torch.full_like(next_state_dict["robot_position"], torch.nan)),
+                                           next_state_dict["robot_position"],
                                            next_state_dict["is_terminal"],
-                                           is_her_terminal,
-                                           torch.where(is_her_terminal, self.her_reward, reward)))
-        if len(self.her_transition_buffer) == self.max_episode_length:
-            transitions = list(zip(*self.her_transition_buffer))
-            states = torch.stack(transitions[0]).to(DEVICE)
-            velocities = torch.stack(transitions[1]).to(DEVICE)
-            actions = torch.stack(transitions[2]).to(DEVICE)
-            next_states = torch.stack(transitions[3]).to(DEVICE)
-            goals = torch.stack(transitions[4]).to(DEVICE)
-            no_terminals = torch.stack(transitions[5]).to(DEVICE).logical_not()
-            her_terminals = torch.stack(transitions[6]).to(DEVICE)
-            rewards = torch.stack(transitions[7]).to(DEVICE)
-            is_valid = torch.zeros_like(no_terminals).to(DEVICE)
-            for i in reversed(range(self.max_episode_length)):
-                i_plus_one = min(i + 1, self.max_episode_length - 1)
-                is_valid[i, :, :] = (is_valid[i_plus_one, :, :].logical_and(no_terminals[i, :, :])).logical_or(her_terminals[i, :, :])
-                goals[i, :, :] = torch.where(goals[i, :, :].isnan(), goals[i_plus_one, :, :], goals[i, :, :])
-            if not is_valid.any():
-                return None
-            noise = self.her_noise_dist.sample([goals.size(1)]).to(DEVICE)
-            noise_magnitudes = torch.linalg.vector_norm(noise, dim=-1, keepdims=True)
-            noise /= noise_magnitudes
-            noise *= torch.minimum(noise_magnitudes, torch.tensor(self.goal_reached_threshold_distance))
-            goals += noise.unsqueeze(0)
-            states[:, :, self.goal_state_index:self.goal_state_index + 3] = goals
-            next_states[:, :, self.goal_state_index:self.goal_state_index + 3] = goals
-            states = torch.masked_select(states, is_valid).reshape([-1, states.size(-1)])
-            velocities = torch.masked_select(velocities, is_valid).reshape([-1, 3])
-            actions = torch.masked_select(actions, is_valid).reshape([-1, actions.size(-1)])
-            next_states = torch.masked_select(next_states, is_valid).reshape([-1, states.size(-1)])
-            rewards = torch.masked_select(rewards, is_valid).unsqueeze(-1)
-            is_terminals = torch.masked_select(her_terminals, is_valid).unsqueeze(-1)
-            self.her_transition_buffer = []
-            return states, velocities, actions, next_states, rewards, is_terminals.float()
-        else:
+                                           next_state_dict["collided"],
+                                           reward))
+        if max_episode_length < 2 or len(self.her_transition_buffer) < max_episode_length:
             return None
+        self.her_transition_buffer = self.her_transition_buffer[-max_episode_length:]
+        # create HER goal
+        noise = self.her_noise_dist.sample([next_state_dict["robot_position"].size(0)]).to(DEVICE)
+        noise_magnitudes = torch.linalg.vector_norm(noise, dim=-1, keepdims=True)
+        noise /= noise_magnitudes
+        noise *= torch.minimum(noise_magnitudes, torch.tensor(self.goal_reached_threshold_distance))
+        goals = (next_state_dict["robot_position"] + noise).unsqueeze(0)
+        # load stacks
+        is_valid = torch.zeros([max_episode_length, self.robot_batch, 1], dtype=torch.bool)
+        transitions = list(zip(*self.her_transition_buffer))
+        states = torch.stack(transitions[0]).to(DEVICE)
+        velocities = torch.stack(transitions[1]).to(DEVICE)
+        actions = torch.stack(transitions[2]).to(DEVICE)
+        next_states = torch.stack(transitions[3]).to(DEVICE)
+        positions = torch.stack(transitions[4]).to(DEVICE)
+        collided_not = torch.stack(transitions[6]).to(DEVICE).logical_not()
+        her_terminals = (torch.linalg.vector_norm(positions - goals, dim=-1, keepdims=True) <= self.goal_reached_threshold_distance).logical_and(collided_not)
+        no_terminals = (torch.stack(transitions[5]).to(DEVICE).logical_or(her_terminals)).logical_not()
+        rewards = torch.where(her_terminals, self.her_reward, torch.stack(transitions[7]).to(DEVICE))
+        for i in reversed(range(max_episode_length)):
+            i_plus_one = min(i + 1, max_episode_length - 1)
+            i_minus_one = max(i - 1, 0)
+            is_valid[i, :, :] = ((is_valid[i_plus_one, :, :].logical_and(no_terminals[i, :, :])).logical_or(her_terminals[i, :, :])).logical_and(no_terminals[i_minus_one, :, :])
+        if not is_valid.any():
+            return None
+        states[:, :, self.goal_state_index:self.goal_state_index + 3] = goals
+        next_states[:, :, self.goal_state_index:self.goal_state_index + 3] = goals
+        states = torch.masked_select(states, is_valid).reshape([-1, states.size(-1)])
+        velocities = torch.masked_select(velocities, is_valid).reshape([-1, 3])
+        actions = torch.masked_select(actions, is_valid).reshape([-1, actions.size(-1)])
+        next_states = torch.masked_select(next_states, is_valid).reshape([-1, states.size(-1)])
+        rewards = torch.masked_select(rewards, is_valid).unsqueeze(-1)
+        is_terminals = torch.masked_select(her_terminals, is_valid).unsqueeze(-1)
+        return states, velocities, actions, next_states, rewards, is_terminals.float()
 
     def update(self, state_dict):
         self.state_dict.update_data(state_dict)
@@ -508,9 +491,7 @@ class RLContext(ABC):
                 self.timeouts = []
                 self.returns = []
                 self.acc_reward = torch.zeros([self.robot_batch, 1])
-                self.acc_lengths = torch.zeros([self.robot_batch, 1])
-            else:
-                self.acc_lengths = acc_lengths_dev.cpu()
+                self.her_transition_buffer = []
         else:
             self.epoch += 1
             if self.epoch > 0:
