@@ -6,27 +6,33 @@ from .basics import *
 
 
 class ReplayBuffer:
-    def __init__(self, capacity, transition=Transition):
+    def __init__(self, capacity, transition=Transition, max_threads = 10):
         self.buffer = [None for _ in transition._fields]
         self.transition = transition
         self.capacity = capacity
         self.lock = Lock()
+        self.push_lock = Lock()
+
+    def push_thread(self, *args):
+        args = list(arg.cpu() for arg in args)
+        with self.push_lock:
+            args = list(arg.to(DEVICE) for arg in args)
+            t = self.transition(*args)
+            mask = torch.zeros_like(t.reward)
+            for field in t._fields:
+                mask = getattr(t, field).isnan().any(-1, keepdims=True).logical_or(mask)
+            mask = mask.logical_not()
+            args = []
+            for v in t:
+                args.append(v[mask.expand([-1, v.size(-1)])].view([-1, v.size(-1)]).cpu())
+            with self.lock:
+                for i, arg in enumerate(args):
+                    self.buffer[i] = arg if self.buffer[i] is None else torch.cat([arg, self.buffer[i]])
+                    if self.buffer[i].size(0) > self.capacity:
+                        self.buffer[i] = self.buffer[i][:self.capacity, :]
 
     def push(self, *args):
-        args = list(arg.to(DEVICE) for arg in args)
-        t = self.transition(*args)
-        mask = torch.zeros_like(t.reward)
-        for field in t._fields:
-            mask = getattr(t, field).isnan().any(-1, keepdims=True).logical_or(mask)
-        mask = mask.logical_not()
-        args = []
-        for v in t:
-            args.append(v[mask.expand([-1, v.size(-1)])].view([-1, v.size(-1)]).cpu())
-        with self.lock:
-            for i, arg in enumerate(args):
-                self.buffer[i] = arg if self.buffer[i] is None else torch.cat([arg, self.buffer[i]])
-                if self.buffer[i].size(0) > self.capacity:
-                    self.buffer[i] = self.buffer[i][:self.capacity, :]
+        Thread(target=self.push_thread, args=[*args]).start()
 
     def sample(self, batch_size):
         def generator():
