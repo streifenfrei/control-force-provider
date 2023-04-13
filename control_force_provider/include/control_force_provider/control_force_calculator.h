@@ -204,16 +204,16 @@ class StateProvider {
 
 class EpisodeContext {
  private:
-  const torch::DeviceType device_;
+  torch::DeviceType device_;
   torch::Tensor start_;
   torch::Tensor goal_;
   std::vector<boost::shared_ptr<Obstacle>> obstacles_;
   boost::shared_ptr<ObstacleLoader> obstacle_loader_;
-  const torch::Tensor start_bb_origin;
-  const torch::Tensor start_bb_dims;
-  const torch::Tensor goal_bb_origin;
-  const torch::Tensor goal_bb_dims;
-  const torch::Tensor goal_bb_end;
+  torch::Tensor start_bb_origin;
+  torch::Tensor start_bb_dims;
+  torch::Tensor goal_bb_origin;
+  torch::Tensor goal_bb_dims;
+  torch::Tensor goal_bb_end;
   double goal_distance;
   const double goal_distance_increase;
   const double begin_max_offset_;

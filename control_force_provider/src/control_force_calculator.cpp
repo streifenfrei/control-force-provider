@@ -72,6 +72,7 @@ Environment::Environment(const YAML::Node& config, int batch_size, torch::Device
 }
 
 void Environment::setDevice(torch::DeviceType device) {
+  start_time_ = start_time_.to(device);
   {
     boost::lock_guard<boost::shared_mutex> lock(ee_pos_mtx);
     ee_position_ = ee_position_.to(device);
@@ -202,7 +203,7 @@ void Environment::update(const torch::Tensor& ee_position) {
     }
     {
       boost::lock_guard<boost::shared_mutex> lock(cd_mtx);
-      collision_distances_[i] = utils::norm((point_on_l1_dev - point_on_l2_dev)).cpu();
+      collision_distances_[i] = utils::norm((point_on_l1_dev - point_on_l2_dev));
     }
   }
 }
@@ -447,8 +448,8 @@ EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacle
     : obstacles_(obstacles),
       obstacle_loader_(obstacle_loader),
       begin_max_offset_(utils::getConfigValue<double>(config, "begin_max_offset")[0]),
-      start_(torch::zeros({batch_size, 3}, utils::getTensorOptions(torch::kCPU))),
-      goal_(torch::zeros({batch_size, 3}, utils::getTensorOptions(torch::kCPU))),
+      start_(torch::zeros({batch_size, 3}, utils::getTensorOptions(device))),
+      goal_(torch::zeros({batch_size, 3}, utils::getTensorOptions(device))),
       start_bb_origin(utils::createTensor(utils ::getConfigValue<double>(config, "start_bb"), 0, 3, device)),
       start_bb_dims(utils::createTensor(utils::getConfigValue<double>(config, "start_bb"), 3, 6, device)),
       goal_bb_origin(utils::createTensor(utils::getConfigValue<double>(config, "goal_bb"), 0, 3, device)),
@@ -461,6 +462,12 @@ EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacle
 void EpisodeContext::setDevice(torch::DeviceType device) {
   start_ = start_.to(device);
   goal_ = goal_.to(device);
+  start_bb_origin = start_bb_origin.to(device);
+  start_bb_dims = start_bb_dims.to(device);
+  goal_bb_origin = goal_bb_origin.to(device);
+  goal_bb_dims = goal_bb_dims.to(device);
+  goal_bb_end = goal_bb_end.to(device);
+  device_ = device;
 }
 
 void EpisodeContext::generateEpisode(const torch::Tensor& mask) {
@@ -470,7 +477,6 @@ void EpisodeContext::generateEpisode(const torch::Tensor& mask) {
   torch::Tensor constrained_goal_bb_dims = torch::minimum(start_ + goal_distance, goal_bb_end) - constrained_goal_bb_origin;
   goal_ = torch::where(mask_, constrained_goal_bb_origin + constrained_goal_bb_dims * torch::rand_like(start_), goal_);
   goal_distance = std::min(goal_distance + goal_distance_increase, torch::max(goal_bb_dims).item<double>());
-  obstacle_loader_->loadNext();
 }
 
 void EpisodeContext::generateEpisode() { this->generateEpisode(torch::ones({start_.size(0), 1}, utils::getTensorOptions(device_, torch::kBool))); }
