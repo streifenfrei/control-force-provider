@@ -204,14 +204,13 @@ class SmartStateDict():
             self._copy_async(key, device)
 
     def __getitem__(self, key):
-        with self.locks[key]:
-            if self.data[key].device != DEVICE:
-                self._copy_sync(key, DEVICE)
-            out = self.data[key]
-            self.access_counts[key] += 1
-            if self.access_counts[key] >= self.approx_max_access_counts[key]:
-                self._copy_async(key, "cpu")
-            return out
+        if self.data[key].device != DEVICE:
+            self._copy_sync(key, DEVICE)
+        out = self.data[key]
+        self.access_counts[key] += 1
+        if self.access_counts[key] >= self.approx_max_access_counts[key]:
+            self._copy_async(key, "cpu")
+        return out
 
     def __len__(self):
         return len(self.data)
@@ -376,14 +375,14 @@ class RLContext(ABC):
 
     def create_her_transitions(self, state_dict, action, next_state_dict, reward):
         max_episode_length = int(torch.max(self.acc_lengths).item())
-        self.her_transition_buffer.append((state_dict["state"],
-                                           state_dict["robot_velocity"],
-                                           action,
-                                           next_state_dict["state"],
-                                           next_state_dict["robot_position"],
-                                           next_state_dict["is_terminal"],
-                                           next_state_dict["collided"],
-                                           reward))
+        self.her_transition_buffer.append((state_dict["state"].cpu(),
+                                           state_dict["robot_velocity"].cpu(),
+                                           action.cpu(),
+                                           next_state_dict["state"].cpu(),
+                                           next_state_dict["robot_position"].cpu(),
+                                           next_state_dict["is_terminal"].cpu(),
+                                           next_state_dict["collided"].cpu(),
+                                           reward.cpu()))
         if max_episode_length < 2 or len(self.her_transition_buffer) < max_episode_length:
             return None
         self.her_transition_buffer = self.her_transition_buffer[-max_episode_length:]
@@ -394,7 +393,7 @@ class RLContext(ABC):
         noise *= torch.minimum(noise_magnitudes, torch.tensor(self.goal_reached_threshold_distance))
         goals = (next_state_dict["robot_position"] + noise).unsqueeze(0)
         # load stacks
-        is_valid = torch.zeros([max_episode_length, self.robot_batch, 1], dtype=torch.bool)
+        is_valid = torch.zeros([max_episode_length, self.robot_batch, 1], dtype=torch.bool, device=DEVICE)
         transitions = list(zip(*self.her_transition_buffer))
         states = torch.stack(transitions[0]).to(DEVICE)
         velocities = torch.stack(transitions[1]).to(DEVICE)
