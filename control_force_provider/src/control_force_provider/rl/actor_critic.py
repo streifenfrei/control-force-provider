@@ -258,9 +258,9 @@ class SACContext(ContinuesRLContext):
                 except StopIteration:
                     batch_generator = None
                     continue
-                state_batch = batch.state
+                state_batch = self.state_augmenter(batch.state)
                 action_batch = batch.action
-                next_state_batch = batch.next_state
+                next_state_batch = self.state_augmenter(batch.next_state)
                 reward_batch = batch.reward
                 is_terminal_batch = batch.is_terminal.float()
                 alpha = self.log_alpha.exp()
