@@ -207,6 +207,7 @@ class SACContext(ContinuesRLContext):
         self.tau = tau
         self.replay_buffer = ReplayBuffer(replay_buffer_size)
         self.actor_lock = Lock()
+        self.her_thread_lock = Lock()
         self.stop_update = False
         self.update_thread = Thread(target=self.update_runnable).start()
         self.log_dict["loss/q1"] = 0
@@ -258,9 +259,9 @@ class SACContext(ContinuesRLContext):
                 except StopIteration:
                     batch_generator = None
                     continue
-                state_batch = batch.state
+                state_batch = self.state_augmenter(batch.state)
                 action_batch = batch.action
-                next_state_batch = batch.next_state
+                next_state_batch = self.state_augmenter(batch.next_state)
                 reward_batch = batch.reward
                 is_terminal_batch = batch.is_terminal.float()
                 alpha = self.log_alpha.exp()
@@ -307,6 +308,13 @@ class SACContext(ContinuesRLContext):
             else:
                 time.sleep(1)
 
+    def her_runnable(self):
+        if self.her_thread_lock.acquire(blocking=False):
+            her_transition = self.create_her_transitions()
+            if her_transition is not None:
+                self.replay_buffer.push(*her_transition)
+            self.her_thread_lock.release()
+
     def _update_impl(self, state_dict, reward):
         if self.train:
             if len(self.last_state_dict):
@@ -318,9 +326,16 @@ class SACContext(ContinuesRLContext):
                                         torch.masked_select(reward, was_not_terminal).reshape([-1, 1]),
                                         torch.masked_select(state_dict["is_terminal"], was_not_terminal).reshape([-1, 1]))
                 # hindsight experience replay
-                her_transition = self.create_her_transitions(self.last_state_dict, self.action_raw, state_dict, reward)
-                if her_transition is not None:
-                    self.replay_buffer.push(*her_transition)
+                with self.her_buffer_lock:
+                    self.her_transition_buffer.append((self.last_state_dict["state"].cpu(),
+                                                       state_dict["robot_velocity"].cpu(),
+                                                       self.action_raw.cpu(),
+                                                       state_dict["state"].cpu(),
+                                                       state_dict["robot_position"].cpu(),
+                                                       state_dict["is_terminal"].cpu(),
+                                                       state_dict["collided"].cpu(),
+                                                       reward.cpu()))
+                Thread(target=self.her_runnable).start()
         with self.actor_lock:
             self.actor.eval()
             with torch.no_grad():

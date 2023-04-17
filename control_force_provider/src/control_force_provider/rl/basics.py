@@ -319,6 +319,7 @@ class RLContext(ABC):
         self.her_reward = self.reward_function.rg + self.reward_function.motion_penalty
         self.her_noise_dist = self.noise_dist = torch.distributions.multivariate_normal.MultivariateNormal(torch.zeros(3), torch.eye(3) * 1e-5)
         self.her_transition_buffer = []
+        self.her_buffer_lock = Lock()
         self.goal_state_index = self.state_augmenter.mapping[StatePartID.goal][0]
         self.explore = True
 
@@ -373,36 +374,31 @@ class RLContext(ABC):
             state_dict_copy[key] = value.clone()
         return state_dict_copy
 
-    def create_her_transitions(self, state_dict, action, next_state_dict, reward):
-        max_episode_length = int(torch.max(self.acc_lengths).item())
-        self.her_transition_buffer.append((state_dict["state"].cpu(),
-                                           state_dict["robot_velocity"].cpu(),
-                                           action.cpu(),
-                                           next_state_dict["state"].cpu(),
-                                           next_state_dict["robot_position"].cpu(),
-                                           next_state_dict["is_terminal"].cpu(),
-                                           next_state_dict["collided"].cpu(),
-                                           reward.cpu()))
-        if max_episode_length < 2 or len(self.her_transition_buffer) < max_episode_length:
-            return None
-        self.her_transition_buffer = self.her_transition_buffer[-max_episode_length:]
+    def create_her_transitions(self):
+        with self.her_buffer_lock:
+            max_episode_length = int(torch.max(self.acc_lengths).item())
+            if max_episode_length < 2 or len(self.her_transition_buffer) < max_episode_length:
+                return None
+            self.her_transition_buffer = self.her_transition_buffer[-max_episode_length:]
+            # load stacks
+            is_valid = torch.zeros([max_episode_length, self.robot_batch, 1], dtype=torch.bool, device=DEVICE)
+            transitions = list(zip(*self.her_transition_buffer))
+            states = torch.stack(transitions[0]).to(DEVICE)
+            velocities = torch.stack(transitions[1]).to(DEVICE)
+            actions = torch.stack(transitions[2]).to(DEVICE)
+            next_states = torch.stack(transitions[3]).to(DEVICE)
+            positions = torch.stack(transitions[4]).to(DEVICE)
+            is_terminals = torch.stack(transitions[5]).to(DEVICE)
+            collided_not = torch.stack(transitions[6]).to(DEVICE).logical_not()
         # create HER goal
-        noise = self.her_noise_dist.sample([next_state_dict["robot_position"].size(0)]).to(DEVICE)
+        goals = positions[-1,:,:].squeeze()
+        noise = self.her_noise_dist.sample([goals.size(0)]).to(DEVICE)
         noise_magnitudes = torch.linalg.vector_norm(noise, dim=-1, keepdims=True)
         noise /= noise_magnitudes
         noise *= torch.minimum(noise_magnitudes, torch.tensor(self.goal_reached_threshold_distance))
-        goals = (next_state_dict["robot_position"] + noise).unsqueeze(0)
-        # load stacks
-        is_valid = torch.zeros([max_episode_length, self.robot_batch, 1], dtype=torch.bool, device=DEVICE)
-        transitions = list(zip(*self.her_transition_buffer))
-        states = torch.stack(transitions[0]).to(DEVICE)
-        velocities = torch.stack(transitions[1]).to(DEVICE)
-        actions = torch.stack(transitions[2]).to(DEVICE)
-        next_states = torch.stack(transitions[3]).to(DEVICE)
-        positions = torch.stack(transitions[4]).to(DEVICE)
-        collided_not = torch.stack(transitions[6]).to(DEVICE).logical_not()
+        goals = (goals + noise).unsqueeze(0)
         her_terminals = (torch.linalg.vector_norm(positions - goals, dim=-1, keepdims=True) <= self.goal_reached_threshold_distance).logical_and(collided_not)
-        no_terminals = (torch.stack(transitions[5]).to(DEVICE).logical_or(her_terminals)).logical_not()
+        no_terminals = (is_terminals.logical_or(her_terminals)).logical_not()
         rewards = torch.where(her_terminals, self.her_reward, torch.stack(transitions[7]).to(DEVICE))
         for i in reversed(range(max_episode_length)):
             i_plus_one = min(i + 1, max_episode_length - 1)
