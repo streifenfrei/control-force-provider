@@ -43,15 +43,15 @@ class ReplayBuffer:
                 with self.lock:
                     for buffer in self.buffer:
                         args.append(buffer[start_index:end_index, :].to(DEVICE))
+                    start_index += batch_size
+                    end_index = min(len(self) - 1, end_index + batch_size)
                 yield self.transition(*args)
-                start_index += batch_size
-                end_index = min(len(self) - 1, end_index + batch_size)
-                if end_index - start_index == 1:
+                if end_index - start_index <= 1:
                     return
         return generator
 
     def __len__(self):
-        return 0 if self.buffer[0] is None else len(self.buffer[0])
+        return 0 if self.buffer[0] is None else self.buffer[0].size(0)
 
 
 class DQN(nn.Module):
