@@ -17,7 +17,7 @@ TorchRLEnvironment::TorchRLEnvironment(const std::string& config_file, std::arra
   batch_size_ = utils::getConfigValue<int>(config["rl"], "robot_batch")[0];
   max_force_ = utils::getConfigValue<double>(config, "max_force")[0];
   env_ = boost::make_shared<Environment>(config, batch_size_, torch::kCPU);
-  episode_context_ = boost::make_shared<EpisodeContext>(env_->getObstacles(), env_->getObstacleLoader(), goal_distance, config["rl"], batch_size_, torch::kCPU);
+  episode_context_ = boost::make_shared<EpisodeContext>(env_->getObstacles(), goal_distance, config["rl"], batch_size_, torch::kCPU);
   episode_context_->generateEpisode();
   episode_context_->startEpisode();
   state_provider_ = boost::make_shared<StateProvider>(*env_, utils::getConfigValue<std::string>(config["rl"], "state_pattern")[0], device_);

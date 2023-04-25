@@ -73,8 +73,15 @@ class WaypointsObstacle : public Obstacle {
 
 class FramesObstacle : public Obstacle {
  private:
-  std::map<double, Eigen::Affine3d> frames_;
-  std::map<double, Eigen::Affine3d>::iterator iter_;
+  torch::Tensor frames_;
+  torch::Tensor all_rcms_;
+  torch::Tensor ob_ids_;
+  torch::Tensor lengths_;
+  double frame_distance_;
+  static bool isValidFile(const std::string& file);
+  const static inline char delimiter = ',';
+  const static inline unsigned int rcm_estimation_sample_num = 100;
+  const static inline double rcm_estimation_max_var = 1e-6;
 
  protected:
   void copyToDevice(torch::DeviceType device) override;
@@ -82,28 +89,13 @@ class FramesObstacle : public Obstacle {
 
  public:
   explicit FramesObstacle(const std::string& id, int batch_size = 1, torch::DeviceType device = torch::kCPU);
-  void setFrames(std::map<double, Eigen::Affine3d> frames);
+  unsigned int getObsAmount() { return frames_.size(0); }
+  void setFrames(torch::Tensor frames, torch::Tensor lengths, torch::Tensor rcms, double frame_distance);
+  void setObIDs(const torch::Tensor& ob_ids, const torch::Tensor& mask);
+  void setObIDs(const torch::Tensor& ob_ids);
   ~FramesObstacle() override = default;
-};
-
-class ObstacleLoader {
- private:
-  const static inline char delimiter = ',';
-  const static inline unsigned int rcm_estimation_sample_num = 100;
-  const static inline double rcm_estimation_max_var = 1e-6;
-  std::vector<boost::shared_ptr<FramesObstacle>> obstacles_;
-  std::vector<std::string> csv_files_;
-  std::vector<std::string>::iterator files_iter_;
-  std::vector<std::map<double, Eigen::Affine3d>> cached_frames_;
-  int reference_obstacle_;
-  boost::random::mt19937 rng_;
-  static bool isValidFile(const std::string& file);
-  std::vector<std::map<double, Eigen::Affine3d>> parseFile(const std::string& file);
-  torch::Tensor estimateRCM(const std::map<double, Eigen::Affine3d>& frames);
-  void updateObstacles(std::vector<std::map<double, Eigen::Affine3d>> frames);
-
- public:
-  ObstacleLoader(std::vector<boost::shared_ptr<FramesObstacle>> obstacles, const std::string& path, int reference_obstacle = -1);
-  void loadNext();
+  static std::vector<std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> loadDataset(const std::string& path, unsigned int num, double frame_distance,
+                                                                                          unsigned int reference_ob, const torch::Tensor& reference_rcm,
+                                                                                          const torch::Tensor& workspace_dims);
 };
 }  // namespace control_force_provider::backend

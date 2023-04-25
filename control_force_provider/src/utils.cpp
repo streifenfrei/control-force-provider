@@ -40,9 +40,9 @@ VectorXd tensorToVector(const torch::Tensor &tensor) {
 
 torch::Tensor vectorToTensor(const VectorXd &vector) {
   torch::Tensor out = torch::empty(vector.size(), getTensorOptions());
-  auto acc = out.accessor<double, 1>();
+  auto acc = out.accessor<float, 1>();
   for (size_t i = 0; i < vector.size(); i++) {
-    acc[i] = vector[i];
+    acc[i] = (float)vector[i];
   }
   return out.unsqueeze(0);
 }

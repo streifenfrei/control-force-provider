@@ -59,16 +59,35 @@ Environment::Environment(const YAML::Node& config, int batch_size, torch::Device
     collision_distances_.push_back(torch::zeros({batch_size, 1}, utils::getTensorOptions(device_)));
     boost::shared_ptr<FramesObstacle> frames_obstacle = boost::dynamic_pointer_cast<FramesObstacle>(obstacle);
     if (frames_obstacle) {
-      if (frames_obstacle->getRCM().equal(torch::zeros(3, utils::getTensorOptions(device_)))) {
-        if (reference_obstacle == -1)
-          reference_obstacle = frames_obstacles.size();
-        else
-          throw utils::ConfigError("Found more than one reference RCM for the obstacles");
+      if (!frames_obstacle->getRCM().equal(torch::zeros(3, utils::getTensorOptions(device_)))) {
+        if (reference_obstacle == -1) reference_obstacle = frames_obstacles.size();
       }
       frames_obstacles.push_back(frames_obstacle);
     }
   }
-  obstacle_loader_ = boost::make_shared<ObstacleLoader>(frames_obstacles, data_path, reference_obstacle);
+  if (!frames_obstacles.empty()) {
+    double interval_duration = utils::getConfigValue<int>(config["rl"], "interval_duration")[0] * 1e-3;
+    auto dataset = FramesObstacle::loadDataset(data_path, (int)frames_obstacles.size(), interval_duration, reference_obstacle,
+                                               frames_obstacles[reference_obstacle]->getRCM(), workspace_bb_dims_);
+    torch::Tensor center_of_action;
+    for (size_t i = 0; i < frames_obstacles.size(); i++) {
+      torch::Tensor frames = std::get<0>(dataset[i]);
+      torch::Tensor first_frame = frames.index({torch::indexing::Slice(), 0, torch::indexing::Slice()}).unsqueeze(1);
+      center_of_action = center_of_action.defined() ? torch::cat({center_of_action, first_frame}, 1) : first_frame;
+    }
+    torch::Tensor lengths = std::get<1>(dataset[0]);
+    center_of_action = center_of_action.mean(1);
+    torch::Tensor mid = workspace_bb_origin_ + 0.5 * workspace_bb_dims_;
+    torch::Tensor frames_correction = (mid - center_of_action).unsqueeze(1);
+    for (size_t i = 0; i < frames_obstacles.size(); i++) {
+      torch::Tensor frames = std::get<0>(dataset[i]) + frames_correction;
+      torch::Tensor rcm = std::get<2>(dataset[i]);
+      if (!frames_obstacles[i]->getRCM().equal(torch::zeros(3, utils::getTensorOptions(device_)))) {
+        rcm = frames_obstacles[i]->getRCM().expand({rcm.size(0), 3});
+      }
+      frames_obstacles[i]->setFrames(frames, lengths, rcm, interval_duration);
+    }
+  }
 }
 
 void Environment::setDevice(torch::DeviceType device) {
@@ -287,9 +306,9 @@ void Environment::setStartTime(const torch::Tensor& startTime) {
   elapsed_time_ = Time::now() - start_time_;
 }
 const std::vector<boost::shared_ptr<Obstacle>>& Environment::getObstacles() const { return obstacles_; }
-const boost::shared_ptr<ObstacleLoader>& Environment::getObstacleLoader() const { return obstacle_loader_; }
 
-ControlForceCalculator::ControlForceCalculator(const YAML::Node& config) : env(boost::make_shared<Environment>(config)), device_(torch::hasCUDA() ? torch::kCUDA : torch::kCPU) {}
+ControlForceCalculator::ControlForceCalculator(const YAML::Node& config)
+    : env(boost::make_shared<Environment>(config)), device_(torch::hasCUDA() ? torch::kCUDA : torch::kCPU) {}
 ControlForceCalculator::ControlForceCalculator(boost::shared_ptr<Environment> env_) : env(env_), device_(torch::hasCUDA() ? torch::kCUDA : torch::kCPU) {}
 
 void ControlForceCalculator::getForce(torch::Tensor& force, const torch::Tensor& ee_position_) {
@@ -420,7 +439,7 @@ StateProvider::StateProvider(const Environment& env, const std::string& state_pa
   }
 }
 
-StateProvider::StatePopulator::StatePopulator(torch::DeviceType device): device_(device) {};
+StateProvider::StatePopulator::StatePopulator(torch::DeviceType device) : device_(device){};
 
 void StateProvider::StatePopulator::populate(torch::Tensor& state) {
   for (size_t i = 0; i < tensors_.size(); i++) {
@@ -443,10 +462,9 @@ torch::Tensor StateProvider::createState() {
   return torch::where(state.isnan(), 0, state).cpu();
 }
 
-EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles, boost::shared_ptr<ObstacleLoader> obstacle_loader, double goal_distance_,
-                               const YAML::Node& config, unsigned int batch_size, torch::DeviceType device)
+EpisodeContext::EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles, double goal_distance_, const YAML::Node& config, unsigned int batch_size,
+                               torch::DeviceType device)
     : obstacles_(obstacles),
-      obstacle_loader_(obstacle_loader),
       begin_max_offset_(utils::getConfigValue<double>(config, "begin_max_offset")[0]),
       start_(torch::zeros({batch_size, 3}, utils::getTensorOptions(device))),
       goal_(torch::zeros({batch_size, 3}, utils::getTensorOptions(device))),
@@ -484,7 +502,15 @@ void EpisodeContext::generateEpisode() { this->generateEpisode(torch::ones({star
 void EpisodeContext::startEpisode(const torch::Tensor& mask) {
   torch::Tensor offset = begin_max_offset_ * torch::rand({start_.size(0), 1}, utils::getTensorOptions(device_));
   torch::Tensor mask_ = mask.to(device_);
-  for (auto& obstacle : obstacles_) obstacle->reset(mask_, offset);
+  torch::Tensor new_ob_ids;
+  for (auto& obstacle : obstacles_) {
+    boost::shared_ptr<FramesObstacle> frames_ob = boost::dynamic_pointer_cast<FramesObstacle>(obstacle);
+    if (frames_ob) {
+      if (!new_ob_ids.defined()) new_ob_ids = torch::randint(frames_ob->getObsAmount(), {mask.size(0), 1});
+      frames_ob->setObIDs(new_ob_ids, mask);
+    }
+    obstacle->reset(mask_, offset);
+  }
 }
 
 void EpisodeContext::startEpisode() { this->startEpisode(torch::ones({start_.size(0), 1}, utils::getTensorOptions(device_, torch::kBool))); }
@@ -493,7 +519,7 @@ ReinforcementLearningAgent::ReinforcementLearningAgent(const YAML::Node& config,
     : ControlForceCalculator(config),
       interval_duration_(utils::getConfigValue<double>(config["rl"], "interval_duration")[0] * 10e-4),
       goal_reached_threshold_distance_(utils::getConfigValue<double>(config["rl"], "goal_reached_threshold_distance")[0]),
-      episode_context_(boost::make_shared<EpisodeContext>(env->getObstacles(), env->getObstacleLoader(), 0.1, config["rl"])),
+      episode_context_(boost::make_shared<EpisodeContext>(env->getObstacles(), 0.1, config["rl"])),
       train(utils::getConfigValue<bool>(config["rl"], "train")[0]),
       rcm_origin_(utils::getConfigValue<bool>(config["rl"], "rcm_origin")[0]),
       output_dir(utils::getConfigValue<std::string>(config["rl"], "output_directory")[0]),
