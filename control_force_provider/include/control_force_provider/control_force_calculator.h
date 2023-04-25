@@ -59,7 +59,6 @@ class Environment {
   double last_update_;
   torch::Tensor elapsed_time_;
   std::vector<boost::shared_ptr<Obstacle>> obstacles_;
-  boost::shared_ptr<ObstacleLoader> obstacle_loader_;
 
  public:
   Environment(const YAML::Node& config, int batch_size = 1, torch::DeviceType device = torch::kCPU);
@@ -88,7 +87,6 @@ class Environment {
   boost::shared_lock_guard<boost::shared_mutex> getObVelocitiesLock();
   const std::vector<torch::Tensor>& getObRCMs() const;
   const std::vector<boost::shared_ptr<Obstacle>>& getObstacles() const;
-  const boost::shared_ptr<ObstacleLoader>& getObstacleLoader() const;
   boost::shared_lock_guard<boost::shared_mutex> getObRCMsLock();
   const std::vector<torch::Tensor>& getPointsOnL1() const;
   boost::shared_lock_guard<boost::shared_mutex> getPointsOnL1Lock();
@@ -208,7 +206,6 @@ class EpisodeContext {
   torch::Tensor start_;
   torch::Tensor goal_;
   std::vector<boost::shared_ptr<Obstacle>> obstacles_;
-  boost::shared_ptr<ObstacleLoader> obstacle_loader_;
   torch::Tensor start_bb_origin;
   torch::Tensor start_bb_dims;
   torch::Tensor goal_bb_origin;
@@ -220,8 +217,8 @@ class EpisodeContext {
   friend class Visualizer;
 
  public:
-  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles_, boost::shared_ptr<ObstacleLoader> obstacle_loader, double goal_distance_,
-                 const YAML::Node& config, unsigned int batch_size = 1, torch::DeviceType device = torch::kCPU);
+  EpisodeContext(std::vector<boost::shared_ptr<Obstacle>> obstacles_, double goal_distance_, const YAML::Node& config, unsigned int batch_size = 1,
+                 torch::DeviceType device = torch::kCPU);
   void setDevice(torch::DeviceType device);
   void generateEpisode(const torch::Tensor& mask);
   void generateEpisode();

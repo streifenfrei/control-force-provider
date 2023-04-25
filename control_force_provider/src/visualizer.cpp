@@ -89,7 +89,8 @@ void Visualizer::callback(const ros::TimerEvent& event) {
         if (!boost::dynamic_pointer_cast<DummyObstacle>(environment_->getObstacles()[i])) {
           for (size_t j = index; j < batch_size; j += thread_count_) {
             Vector3d pos = position(j);
-            Vector3d obstacle_rcm = utils::tensorToVector(ob_rcms[i] + offset) + pos;
+            torch::Tensor ob_rcm_t = ob_rcms[i].size(0) == 1 ? ob_rcms[i] : ob_rcms[i][j];
+            Vector3d obstacle_rcm = utils::tensorToVector(ob_rcm_t + offset) + pos;
             Vector3d obstacle_pos = utils::tensorToVector(ob_positions[i][j] + offset) + pos;
             boost::lock_guard<boost::mutex> lock(visualizer_mtx_);
             visual_tools_.publishSphere(obstacle_rcm, rviz_visual_tools::BROWN);
