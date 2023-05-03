@@ -228,6 +228,7 @@ class SACContext(ContinuesRLContext):
             "actor_optim": self.actor_optim.state_dict(),
             "log_alpha": self.log_alpha.item(),
             "alpha_optim": self.alpha_optim.state_dict(),
+            "replay_buffer": self.replay_buffer.buffer
         }
 
     def _load_impl_(self, state_dict):
@@ -243,6 +244,8 @@ class SACContext(ContinuesRLContext):
         self.log_alpha = torch.full_like(self.log_alpha, state_dict["log_alpha"], device=DEVICE, requires_grad=True)
         self.alpha_optim = torch.optim.Adam([self.log_alpha])
         self.alpha_optim.load_state_dict(state_dict["alpha_optim"])
+        if "replay_buffer" in state_dict:
+            self.replay_buffer.buffer = state_dict["replay_buffer"]
 
     def _soft_copy(self, target_net, net):
         for target_p, p in zip(target_net.parameters(), net.parameters()):
