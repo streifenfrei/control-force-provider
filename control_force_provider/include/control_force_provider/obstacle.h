@@ -93,6 +93,7 @@ class FramesObstacle : public Obstacle {
   void setFrames(torch::Tensor frames, torch::Tensor lengths, torch::Tensor rcms, double frame_distance);
   void setObIDs(const torch::Tensor& ob_ids, const torch::Tensor& mask);
   void setObIDs(const torch::Tensor& ob_ids);
+  torch::Tensor getDurations();
   ~FramesObstacle() override = default;
   static std::vector<std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> loadDataset(const std::string& path, unsigned int num, double frame_distance,
                                                                                           unsigned int reference_ob, const torch::Tensor& reference_rcm,

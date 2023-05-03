@@ -116,7 +116,12 @@ torch::Tensor WaypointsObstacle::getPositionAt(torch::Tensor time) {
 FramesObstacle::FramesObstacle(const std::string& id, int batch_size, torch::DeviceType device)
     : Obstacle(id, batch_size, device), frame_distance_(0), ob_ids_(torch::zeros({batch_size, 1}, torch::kInt64)) {}
 
-void FramesObstacle::copyToDevice(torch::DeviceType device) {}
+void FramesObstacle::copyToDevice(torch::DeviceType device) {
+  frames_ = frames_.to(device);
+  all_rcms_ = all_rcms_.to(device);
+  ob_ids_ = ob_ids_.to(device);
+  lengths_ = lengths_.to(device);
+}
 
 void FramesObstacle::setFrames(torch::Tensor frames, torch::Tensor lengths, torch::Tensor rcms, double frame_distance) {
   frames_ = std::move(frames);
@@ -130,6 +135,10 @@ void FramesObstacle::setObIDs(const torch::Tensor& ob_ids) { setObIDs(ob_ids, to
 void FramesObstacle::setObIDs(const torch::Tensor& ob_ids, const torch::Tensor& mask) {
   ob_ids_ = torch::where(mask, ob_ids, ob_ids_).to(torch::kInt64);
   rcm_ = torch::gather(all_rcms_, 0, ob_ids_.expand({ob_ids_.size(0), 3}));
+}
+
+torch::Tensor FramesObstacle::getDurations() {
+  return lengths_ * frame_distance_;
 }
 
 torch::Tensor FramesObstacle::getPositionAt(torch::Tensor time) {
@@ -170,17 +179,17 @@ std::vector<std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> FramesObsta
     double start_time;
     size_t line = 0;
     bool all_visible = true;
-    double last_time;
+    double last_time = 0;
     Vector3d first_mid = Vector3d::Zero();
+    bool started = false;
+    int first_line = 0;
     while (std::getline(line_stream, buffer)) {
       std::istringstream token_stream(buffer);
       std::vector<std::string> tokens;
       while (std::getline(token_stream, buffer, delimiter)) tokens.push_back(buffer);
       double time = std::stod(tokens[0]);
-      if (line == 0) start_time = time;
-      time = (time - start_time);
-      last_time = time;
       Vector3d mean = Vector3d::Zero();
+      std::vector<Affine3d> current_affines;
       for (size_t i = 0; i < num; i++) {
         unsigned int j = 9 * i + 1;
         if (j + 8 >= tokens.size()) throw CSVError("Expected " + std::to_string(num) + " obstacles in " + file);
@@ -189,21 +198,36 @@ std::vector<std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> FramesObsta
         all_visible = all_visible && (bool)std::stoi(tokens[j + 8]);
         position *= 1e-3;
         mean += position;
-        affines[i][time] = Translation3d(position) * rotation;
+        Affine3d affine = Translation3d(position) * rotation;
+        current_affines.push_back(affine);
       }
       mean /= num;
-      if (line == 0) first_mid = Vector3d(mean);
-      torch::Tensor dev = utils::vectorToTensor(mean - first_mid).squeeze();
-      bool critical_dev = (dev < -max_dev).logical_or(dev > max_dev).any().item<bool>();
-      double distance = (affines[0][time].translation() - affines[1][time].translation()).norm();
-      if (!all_visible || distance > 0.3 || critical_dev) break;
+      double distance = (current_affines[0].translation() - current_affines[1].translation()).norm();
+      bool critical_distance = distance > 0.3;
+      bool valid = all_visible && !critical_distance;
+      if (valid && !started) {
+        start_time = time;
+        first_mid = Vector3d(mean);
+        first_line = line;
+        started = true;
+      }
+      if (started) {
+        torch::Tensor dev = utils::vectorToTensor(mean - first_mid).squeeze();
+        bool critical_dev = (dev < -max_dev).logical_or(dev > max_dev).any().item<bool>();
+        time = (time - start_time);
+        last_time = time;
+        if (critical_distance || critical_dev) break;
+        for (size_t i = 0; i < num; i++) {
+          affines[i][time] = current_affines[i];
+        }
+      }
       line++;
     }
-    if (last_time < 60) {
+    if (last_time < 15) {
       ROS_WARN_STREAM_NAMED("control_force_provider", "" << file << " is only valid for " << last_time << " seconds. skipping...");
       continue;
     }
-    if (affines[0].empty()) throw CSVError("Could not parse " + file);
+    if (affines[0].empty()) continue;
     // estimate RCM and create interpolated frame tensor
     unsigned int ob_i = 0;
     for (auto& ob : affines) {

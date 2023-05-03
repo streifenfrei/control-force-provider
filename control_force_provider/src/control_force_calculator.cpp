@@ -506,8 +506,10 @@ void EpisodeContext::startEpisode(const torch::Tensor& mask) {
   for (auto& obstacle : obstacles_) {
     boost::shared_ptr<FramesObstacle> frames_ob = boost::dynamic_pointer_cast<FramesObstacle>(obstacle);
     if (frames_ob) {
-      if (!new_ob_ids.defined()) new_ob_ids = torch::randint(frames_ob->getObsAmount(), {mask.size(0), 1});
+      if (!new_ob_ids.defined()) new_ob_ids = torch::randint(frames_ob->getObsAmount(), {mask.size(0), 1}, utils::getTensorOptions(device_));
       frames_ob->setObIDs(new_ob_ids, mask);
+      torch::Tensor min_start = std::get<0>((frames_ob->getDurations() - 15).max(0));
+      offset = offset.min(min_start);
     }
     obstacle->reset(mask_, offset);
   }
