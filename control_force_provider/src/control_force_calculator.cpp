@@ -446,14 +446,15 @@ void StateProvider::StatePopulator::populate(torch::Tensor& state) {
     const torch::Tensor* tensor = tensors_[i];
     if (histories_.size() <= i) histories_.emplace_back();
     std::deque<torch::Tensor>& history = histories_[i];
-    if (stride_index_ == 0) {
-      do history.push_back(*tensor);
-      while (history.size() <= history_length_);
-      history.pop_front();
+    do history.push_back(*tensor);
+    while (history.size() <= history_length_ * history_stride_);
+    history.pop_front();
+    std::vector<torch::Tensor> strided_history;
+    for (size_t j = 0; j < history_length_; j++) {
+      strided_history.push_back(history[j*history_stride_]);
     }
-    for (auto& ten : history) state = state.defined() ? torch::cat({state, ten.to(device_)}, -1) : ten.to(device_);
+    for (auto& ten : strided_history) state = state.defined() ? torch::cat({state, ten.to(device_)}, -1) : ten.to(device_);
   }
-  stride_index_ = (stride_index_ - 1) % (history_stride_ + 1);
 }
 
 torch::Tensor StateProvider::createState() {
